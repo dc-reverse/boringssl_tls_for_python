@@ -17,26 +17,30 @@ elseif(APPLE)
     set(CMAKE_MACOSX_RPATH ON)
 endif()
 
-# BoringSSL (optional - only needed for actual TLS connections)
-set(BORINGSSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/boringssl")
-if(EXISTS "${BORINGSSL_ROOT}/CMakeLists.txt")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    # Don't add_subdirectory BoringSSL - we use standalone implementation
-    # add_subdirectory(${BORINGSSL_ROOT} boringssl EXCLUDE_FROM_ALL)
+# BoringSSL (required for actual TLS connections)
+set(BORINGSSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/boringssl/install")
+set(BORINGSSL_INCLUDE_DIR "${BORINGSSL_ROOT}/include")
+set(BORINGSSL_LIB_DIR "${BORINGSSL_ROOT}/lib")
+
+if(EXISTS "${BORINGSSL_INCLUDE_DIR}/openssl/ssl.h")
     message(STATUS "BoringSSL found at ${BORINGSSL_ROOT}")
+    set(BORINGSSL_FOUND TRUE)
 else()
-    message(STATUS "BoringSSL not found - using standalone implementation")
+    message(STATUS "BoringSSL not found at ${BORINGSSL_ROOT}")
+    set(BORINGSSL_FOUND FALSE)
 endif()
 
 # Core library sources (standalone implementation)
 set(TLS_FINGERPRINT_SOURCES
     src/tls_fingerprint_config.cc
     src/tls_fingerprint_generator.cc
+    src/boringssl_socket.cc
 )
 
 set(TLS_FINGERPRINT_HEADERS
     include/tls_fingerprint/tls_fingerprint_config.h
     include/tls_fingerprint/tls_fingerprint_generator.h
+    include/tls_fingerprint/boringssl_socket.h
 )
 
 # Create core static library
@@ -45,6 +49,15 @@ target_include_directories(tls_fingerprint_static
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# Link BoringSSL if found
+if(BORINGSSL_FOUND)
+    target_include_directories(tls_fingerprint_static PUBLIC ${BORINGSSL_INCLUDE_DIR})
+    target_link_libraries(tls_fingerprint_static
+        ${BORINGSSL_LIB_DIR}/libssl.a
+        ${BORINGSSL_LIB_DIR}/libcrypto.a
+    )
+endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
@@ -75,7 +88,17 @@ if(BUILD_PYTHON_BINDINGS)
         target_include_directories(_tls_fingerprint PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
-        target_link_libraries(_tls_fingerprint PRIVATE tls_fingerprint_static)
+        # Add BoringSSL includes and libraries
+        if(BORINGSSL_FOUND)
+            target_include_directories(_tls_fingerprint PRIVATE ${BORINGSSL_INCLUDE_DIR})
+            target_link_libraries(_tls_fingerprint PRIVATE
+                tls_fingerprint_static
+                ${BORINGSSL_LIB_DIR}/libssl.a
+                ${BORINGSSL_LIB_DIR}/libcrypto.a
+            )
+        else()
+            target_link_libraries(_tls_fingerprint PRIVATE tls_fingerprint_static)
+        endif()
         set_target_properties(_tls_fingerprint PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/tls_fingerprint
         )

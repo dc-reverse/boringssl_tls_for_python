@@ -1,0 +1,556 @@
+// BoringSSL Socket Implementation
+
+#include "tls_fingerprint/boringssl_socket.h"
+
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cstring>
+#include <cerrno>
+#include <chrono>
+#include <sstream>
+#include <iomanip>
+
+// BoringSSL headers
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/rand.h>
+
+namespace tls_fingerprint {
+
+// Implementation class
+class BoringSSLSocket::Impl {
+public:
+    Impl() : ssl_ctx_(nullptr), ssl_(nullptr), sock_fd_(-1),
+             connected_(false), debug_(false) {}
+    ~Impl() { Close(); }
+
+    SSL_CTX* ssl_ctx_ = nullptr;
+    SSL* ssl_ = nullptr;
+    int sock_fd_ = -1;
+    std::string host_;
+    int port_ = 0;
+    bool connected_ = false;
+    bool debug_ = false;
+    std::string last_error_;
+    std::string debug_log_;
+    TLSFingerprintConfig config_;
+
+    void debugLog(const std::string& msg) {
+        if (debug_) {
+            auto now = std::chrono::system_clock::now();
+            auto time = std::chrono::system_clock::to_time_t(now);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch() % std::chrono::seconds(1)).count();
+
+            std::stringstream ss;
+            ss << "[" << std::put_time(std::localtime(&time), "%H:%M:%S")
+               << "." << std::setfill('0') << std::setw(3) << ms << "] " << msg;
+            debug_log_ += ss.str() + "\n";
+            fprintf(stderr, "%s\n", ss.str().c_str());
+        }
+    }
+
+    static const char* GetCipherName(uint16_t cipher_id) {
+        switch (cipher_id) {
+            case 0x1301: return "TLS_AES_128_GCM_SHA256";
+            case 0x1302: return "TLS_AES_256_GCM_SHA384";
+            case 0x1303: return "TLS_CHACHA20_POLY1305_SHA256";
+            case 0xC02B: return "ECDHE-ECDSA-AES128-GCM-SHA256";
+            case 0xC02F: return "ECDHE-RSA-AES128-GCM-SHA256";
+            case 0xC02C: return "ECDHE-ECDSA-AES256-GCM-SHA384";
+            case 0xC030: return "ECDHE-RSA-AES256-GCM-SHA384";
+            case 0xCCA9: return "ECDHE-ECDSA-CHACHA20-POLY1305";
+            case 0xCCA8: return "ECDHE-RSA-CHACHA20-POLY1305";
+            default: return "UNKNOWN";
+        }
+    }
+
+    bool InitSSLContext() {
+        if (ssl_ctx_) {
+            SSL_CTX_free(ssl_ctx_);
+        }
+        ssl_ctx_ = SSL_CTX_new(TLS_method());
+        if (!ssl_ctx_) {
+            last_error_ = "Failed to create SSL_CTX";
+            debugLog("ERROR: " + last_error_);
+            return false;
+        }
+
+        SSL_CTX_set_min_proto_version(ssl_ctx_, TLS1_2_VERSION);
+        SSL_CTX_set_max_proto_version(ssl_ctx_, TLS1_3_VERSION);
+        SSL_CTX_set_verify(ssl_ctx_, SSL_VERIFY_NONE, nullptr);
+
+        return true;
+    }
+
+    void ConfigureSSLWithFingerprint() {
+        if (!ssl_ || config_.cipher_suites.empty()) {
+            return;
+        }
+
+        // Configure cipher suites for TLS 1.2
+        std::string cipher_list;
+        for (size_t i = 0; i < config_.cipher_suites.size(); i++) {
+            if (i > 0) cipher_list += ":";
+            cipher_list += GetCipherName(config_.cipher_suites[i]);
+        }
+
+        if (!cipher_list.empty()) {
+            SSL_set_cipher_list(ssl_, cipher_list.c_str());
+        }
+
+        // Configure TLS 1.3 ciphersuites
+        std::string tls13_ciphers;
+        for (uint16_t cs : config_.cipher_suites) {
+            if (cs >= 0x1301 && cs <= 0x1303) {
+                if (!tls13_ciphers.empty()) tls13_ciphers += ":";
+                tls13_ciphers += GetCipherName(cs);
+            }
+        }
+        if (!tls13_ciphers.empty()) {
+            SSL_set_cipher_list(ssl_, tls13_ciphers.c_str());
+        }
+    }
+
+    int SetNonBlocking(bool non_block) {
+        int flags = fcntl(sock_fd_, F_GETFL, 0);
+        if (flags < 0) return -1;
+        if (non_block) {
+            flags |= O_NONBLOCK;
+        } else {
+            flags &= ~O_NONBLOCK;
+        }
+        return fcntl(sock_fd_, F_SETFL, flags);
+    }
+
+    int WaitForSocket(bool wait_read, int timeout_ms) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(sock_fd_, &fds);
+
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+        int result;
+        if (wait_read) {
+            result = select(sock_fd_ + 1, &fds, nullptr, nullptr, &tv);
+        } else {
+            result = select(sock_fd_ + 1, nullptr, &fds, nullptr, &tv);
+        }
+
+        if (result < 0) {
+            last_error_ = "select() failed";
+            return -1;
+        } else if (result == 0) {
+            last_error_ = "Connection timed out";
+            return -1;
+        }
+        return 0;
+    }
+
+    int ConnectTCP(const std::string& host, int port, int timeout_ms) {
+        debugLog("Resolving DNS for " + host + "...");
+        auto dns_start = std::chrono::steady_clock::now();
+
+        struct hostent* he = gethostbyname(host.c_str());
+        if (!he) {
+            last_error_ = "Failed to resolve hostname: " + host;
+            debugLog("ERROR: " + last_error_);
+            return -1;
+        }
+
+        auto dns_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - dns_start).count();
+        debugLog("DNS resolved in " + std::to_string(dns_elapsed) + "ms");
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+
+        debugLog("Connecting to " + host + ":" + std::to_string(port) + "...");
+        auto conn_start = std::chrono::steady_clock::now();
+
+        if (SetNonBlocking(true) < 0) {
+            last_error_ = "Failed to set non-blocking mode";
+            return -1;
+        }
+
+        int result = ::connect(sock_fd_, (struct sockaddr*)&addr, sizeof(addr));
+        if (result < 0 && errno != EINPROGRESS) {
+            last_error_ = "connect() failed: " + std::string(strerror(errno));
+            debugLog("ERROR: " + last_error_);
+            return -1;
+        }
+
+        if (result != 0) {
+            result = WaitForSocket(false, timeout_ms);
+            if (result < 0) return result;
+        }
+
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(sock_fd_, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+            last_error_ = "getsockopt() failed";
+            return -1;
+        }
+        if (error != 0) {
+            last_error_ = "Connection failed: " + std::string(strerror(error));
+            debugLog("ERROR: " + last_error_);
+            return -1;
+        }
+
+        SetNonBlocking(false);
+
+        auto conn_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - conn_start).count();
+        debugLog("TCP connected in " + std::to_string(conn_elapsed) + "ms");
+
+        return 0;
+    }
+
+    int DoSSLHandshake(const std::string& hostname) {
+        debugLog("Starting SSL/TLS handshake with " + hostname + "...");
+        auto ssl_start = std::chrono::steady_clock::now();
+
+        if (!InitSSLContext()) {
+            return -1;
+        }
+
+        ssl_ = SSL_new(ssl_ctx_);
+        if (!ssl_) {
+            last_error_ = "Failed to create SSL object";
+            debugLog("ERROR: " + last_error_);
+            return -1;
+        }
+
+        SSL_set_tlsext_host_name(ssl_, hostname.c_str());
+        ConfigureSSLWithFingerprint();
+        SSL_set_fd(ssl_, sock_fd_);
+
+        if (SetNonBlocking(true) < 0) {
+            return -1;
+        }
+
+        const int handshake_timeout_ms = 30000;
+        while (true) {
+            int result = SSL_connect(ssl_);
+
+            if (result == 1) {
+                break;
+            }
+
+            int ssl_error = SSL_get_error(ssl_, result);
+
+            if (ssl_error == SSL_ERROR_WANT_READ) {
+                int wait_result = WaitForSocket(true, handshake_timeout_ms);
+                if (wait_result < 0) return wait_result;
+            } else if (ssl_error == SSL_ERROR_WANT_WRITE) {
+                int wait_result = WaitForSocket(false, handshake_timeout_ms);
+                if (wait_result < 0) return wait_result;
+            } else {
+                unsigned long err = ERR_get_error();
+                char err_buf[256];
+                ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                last_error_ = std::string("SSL handshake failed: ") + err_buf;
+                debugLog("ERROR: " + last_error_);
+                return -1;
+            }
+        }
+
+        SetNonBlocking(false);
+
+        auto ssl_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - ssl_start).count();
+        debugLog("SSL handshake completed in " + std::to_string(ssl_elapsed) + "ms");
+        debugLog("Negotiated cipher: " + std::string(SSL_get_cipher(ssl_)));
+        debugLog("TLS version: " + std::string(SSL_get_version(ssl_)));
+
+        return 0;
+    }
+
+    int DoProxyConnect(const std::string& target_host, int target_port) {
+        debugLog("Sending HTTP CONNECT to " + target_host + ":" + std::to_string(target_port));
+
+        std::string request = "CONNECT " + target_host + ":" + std::to_string(target_port) + " HTTP/1.1\r\n";
+        request += "Host: " + target_host + ":" + std::to_string(target_port) + "\r\n";
+        request += "\r\n";
+
+        if (send(sock_fd_, request.c_str(), request.size(), 0) < 0) {
+            last_error_ = "Failed to send CONNECT request";
+            return -1;
+        }
+
+        char response[4096];
+        int total = 0;
+        while (total < (int)sizeof(response) - 1) {
+            int n = recv(sock_fd_, response + total, 1, 0);
+            if (n <= 0) {
+                last_error_ = "Failed to read proxy response";
+                return -1;
+            }
+            total += n;
+            response[total] = '\0';
+
+            if (total >= 4 && strstr(response, "\r\n\r\n")) {
+                break;
+            }
+        }
+
+        if (strstr(response, "200") == nullptr) {
+            last_error_ = "Proxy CONNECT failed: " + std::string(response);
+            return -1;
+        }
+
+        debugLog("Proxy CONNECT successful");
+        return 0;
+    }
+
+    int DoSocks5Handshake(const std::string& target_host, int target_port) {
+        debugLog("Performing SOCKS5 handshake...");
+
+        uint8_t greeting[3] = {0x05, 0x01, 0x00};
+        if (send(sock_fd_, greeting, 3, 0) < 0) {
+            last_error_ = "Failed to send SOCKS5 greeting";
+            return -1;
+        }
+
+        uint8_t response[2];
+        if (recv(sock_fd_, response, 2, 0) != 2) {
+            last_error_ = "Invalid SOCKS5 response";
+            return -1;
+        }
+
+        if (response[0] != 5) {
+            last_error_ = "Not a SOCKS5 proxy";
+            return -1;
+        }
+
+        uint8_t connect_req[512];
+        int pos = 0;
+        connect_req[pos++] = 0x05;
+        connect_req[pos++] = 0x01;
+        connect_req[pos++] = 0x00;
+        connect_req[pos++] = 0x03;
+        connect_req[pos++] = (uint8_t)target_host.size();
+        memcpy(connect_req + pos, target_host.c_str(), target_host.size());
+        pos += target_host.size();
+        connect_req[pos++] = (target_port >> 8) & 0xFF;
+        connect_req[pos++] = target_port & 0xFF;
+
+        if (send(sock_fd_, connect_req, pos, 0) < 0) {
+            last_error_ = "Failed to send SOCKS5 CONNECT";
+            return -1;
+        }
+
+        uint8_t connect_resp[10];
+        if (recv(sock_fd_, connect_resp, 10, 0) != 10) {
+            last_error_ = "Invalid SOCKS5 CONNECT response";
+            return -1;
+        }
+
+        if (connect_resp[1] != 0) {
+            last_error_ = "SOCKS5 CONNECT failed";
+            return -1;
+        }
+
+        debugLog("SOCKS5 handshake successful");
+        return 0;
+    }
+
+    void Close() {
+        if (ssl_) {
+            SSL_shutdown(ssl_);
+            SSL_free(ssl_);
+            ssl_ = nullptr;
+        }
+        if (ssl_ctx_) {
+            SSL_CTX_free(ssl_ctx_);
+            ssl_ctx_ = nullptr;
+        }
+        if (sock_fd_ >= 0) {
+            close(sock_fd_);
+            sock_fd_ = -1;
+        }
+        connected_ = false;
+    }
+};
+
+// BoringSSLSocket implementation - just delegates to Impl
+BoringSSLSocket::BoringSSLSocket() : impl_(new Impl()) {}
+
+BoringSSLSocket::~BoringSSLSocket() = default;
+
+void BoringSSLSocket::SetConfig(const TLSFingerprintConfig& config) {
+    impl_->config_ = config;
+}
+
+int BoringSSLSocket::Connect(const std::string& host, int port, int timeout_ms) {
+    impl_->debug_log_.clear();
+    impl_->debugLog("=== Starting connection to " + host + ":" + std::to_string(port) + " ===");
+
+    impl_->host_ = host;
+    impl_->port_ = port;
+
+    impl_->sock_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (impl_->sock_fd_ < 0) {
+        impl_->last_error_ = "Failed to create socket";
+        return -1;
+    }
+
+    if (impl_->ConnectTCP(host, port, timeout_ms) < 0) {
+        return -1;
+    }
+
+    if (impl_->DoSSLHandshake(host) < 0) {
+        return -1;
+    }
+
+    impl_->connected_ = true;
+    impl_->debugLog("=== Connection completed ===");
+    return 0;
+}
+
+int BoringSSLSocket::ConnectViaProxy(
+    const std::string& proxy_host, int proxy_port,
+    const std::string& target_host, int target_port,
+    const std::string& proxy_type,
+    int timeout_ms
+) {
+    impl_->debug_log_.clear();
+    impl_->debugLog("=== Starting proxy connection to " + target_host + ":" + std::to_string(target_port) + " ===");
+    impl_->debugLog("Via proxy: " + proxy_host + ":" + std::to_string(proxy_port) + " (" + proxy_type + ")");
+
+    impl_->host_ = target_host;
+    impl_->port_ = target_port;
+
+    impl_->sock_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (impl_->sock_fd_ < 0) {
+        impl_->last_error_ = "Failed to create socket";
+        return -1;
+    }
+
+    if (impl_->ConnectTCP(proxy_host, proxy_port, timeout_ms) < 0) {
+        return -1;
+    }
+
+    if (proxy_type == "socks5" || proxy_type == "socks") {
+        if (impl_->DoSocks5Handshake(target_host, target_port) < 0) {
+            return -1;
+        }
+    } else {
+        if (impl_->DoProxyConnect(target_host, target_port) < 0) {
+            return -1;
+        }
+    }
+
+    if (impl_->DoSSLHandshake(target_host) < 0) {
+        return -1;
+    }
+
+    impl_->connected_ = true;
+    impl_->debugLog("=== Connection completed ===");
+    return 0;
+}
+
+int BoringSSLSocket::Send(const uint8_t* data, size_t len) {
+    if (!impl_->connected_ || !impl_->ssl_) {
+        impl_->last_error_ = "Not connected";
+        return -1;
+    }
+    int result = SSL_write(impl_->ssl_, data, static_cast<int>(len));
+    if (result <= 0) {
+        int ssl_error = SSL_get_error(impl_->ssl_, result);
+        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+            return 0;
+        }
+        unsigned long err = ERR_get_error();
+        char err_buf[256];
+        ERR_error_string_n(err, err_buf, sizeof(err_buf));
+        impl_->last_error_ = std::string("SSL_write failed: ") + err_buf;
+        return -1;
+    }
+    return result;
+}
+
+int BoringSSLSocket::Send(const std::vector<uint8_t>& data) {
+    return Send(data.data(), data.size());
+}
+
+int BoringSSLSocket::Recv(uint8_t* buf, size_t buf_len) {
+    if (!impl_->connected_ || !impl_->ssl_) {
+        impl_->last_error_ = "Not connected";
+        return -1;
+    }
+    int result = SSL_read(impl_->ssl_, buf, static_cast<int>(buf_len));
+    if (result < 0) {
+        int ssl_error = SSL_get_error(impl_->ssl_, result);
+        if (ssl_error == SSL_ERROR_WANT_READ) {
+            return 0;
+            }
+        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+                return 0;
+            }
+        unsigned long err = ERR_get_error();
+        char err_buf[256];
+        ERR_error_string_n(err, err_buf, sizeof(err_buf));
+        impl_->last_error_ = std::string("SSL_read failed: ") + err_buf;
+        return -1;
+    }
+    return result;
+}
+
+std::vector<uint8_t> BoringSSLSocket::Recv(size_t max_len) {
+    std::vector<uint8_t> buf(max_len);
+    int n = Recv(buf.data(), max_len);
+    if (n < 0) {
+        return {};
+    }
+    buf.resize(n > 0 ? n : 0);
+    return buf;
+}
+
+void BoringSSLSocket::Close() {
+    impl_->Close();
+}
+
+bool BoringSSLSocket::IsConnected() const {
+    return impl_->connected_;
+}
+
+SSLConnectionInfo BoringSSLSocket::GetConnectionInfo() const {
+    SSLConnectionInfo info;
+    if (impl_->ssl_) {
+        info.cipher_suite = SSL_get_cipher(impl_->ssl_);
+        info.version = SSL_get_version(impl_->ssl_);
+
+        const unsigned char* alpn;
+        unsigned int alpn_len;
+        SSL_get0_alpn_selected(impl_->ssl_, &alpn, &alpn_len);
+        if (alpn && alpn_len > 0) {
+            info.negotiated_protocol = std::string((const char*)alpn, alpn_len);
+        }
+    }
+    return info;
+}
+
+std::string BoringSSLSocket::GetLastError() const {
+    return impl_->last_error_;
+}
+
+void BoringSSLSocket::SetDebug(bool debug) {
+    impl_->debug_ = debug;
+}
+
+std::string BoringSSLSocket::GetDebugLog() const {
+    return impl_->debug_log_;
+}
+
+}  // namespace tls_fingerprint
