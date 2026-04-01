@@ -9,6 +9,8 @@ import socket
 import ssl
 import struct
 import random
+import time
+import sys
 from typing import Optional, Dict, Any, Tuple, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -19,6 +21,13 @@ from .pure_python import (
     BrowserFingerprints,
 )
 from .session import TLSSession
+
+
+def _log(debug: bool, msg: str, *args):
+    """Print debug log message."""
+    if debug:
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[{timestamp}] [TLS] {msg}", *args, file=sys.stderr)
 
 
 @dataclass
@@ -102,6 +111,7 @@ class TLSHttpClient:
     - HTTP/HTTPS/SOCKS5 proxy support
     - Connection pooling via session
     - Automatic header management
+    - Debug logging for troubleshooting
 
     Example:
         # Simple usage
@@ -113,6 +123,10 @@ class TLSHttpClient:
             browser_type="random",
             proxy="http://127.0.0.1:8080"
         )
+        response = client.get("https://example.com")
+
+        # With debug logging
+        client = TLSHttpClient(browser_type="chrome", debug=True)
         response = client.get("https://example.com")
 
         # With session (consistent fingerprint)
@@ -129,6 +143,7 @@ class TLSHttpClient:
         proxy: Optional[Union[str, ProxyConfig]] = None,
         timeout: float = 30.0,
         default_headers: Optional[Dict[str, str]] = None,
+        debug: bool = False,
     ):
         """
         Initialize HTTP client.
@@ -139,12 +154,18 @@ class TLSHttpClient:
             proxy: Proxy URL or ProxyConfig (http://, https://, socks5://)
             timeout: Request timeout in seconds
             default_headers: Default headers to send with every request
+            debug: Enable debug logging to see request timing details
         """
         self._session = session or TLSSession(browser_type=browser_type)
         self._proxy = self._parse_proxy(proxy) if proxy else None
         self._timeout = timeout
         self._default_headers = default_headers or {}
         self._generator: Optional[TLSFingerprintGenerator] = None
+        self._debug = debug
+
+    def _log(self, msg: str, *args):
+        """Print debug log message."""
+        _log(self._debug, msg, *args)
 
     def _parse_proxy(self, proxy: Union[str, ProxyConfig]) -> ProxyConfig:
         """Parse proxy configuration."""
@@ -207,12 +228,16 @@ class TLSHttpClient:
         if not proxy:
             raise ValueError("No proxy configured")
 
+        self._log(f"Connecting to proxy {proxy.host}:{proxy.port}...")
+        start = time.time()
+
         # Create socket to proxy
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(self._timeout)
 
         try:
             sock.connect((proxy.host, proxy.port))
+            self._log(f"Connected to proxy in {time.time()-start:.3f}s")
         except socket.error as e:
             sock.close()
             raise ConnectionError(f"Failed to connect to proxy {proxy.host}:{proxy.port}: {e}")
@@ -230,6 +255,9 @@ class TLSHttpClient:
     def _http_connect(self, sock: socket.socket, host: str, port: int) -> socket.socket:
         """Perform HTTP CONNECT handshake."""
         proxy = self._proxy
+        start = time.time()
+
+        self._log(f"Sending HTTP CONNECT to {host}:{port}...")
 
         # Build CONNECT request
         connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\n"
@@ -265,11 +293,15 @@ class TLSHttpClient:
             sock.close()
             raise ConnectionError(f"Proxy CONNECT failed: {status_line}")
 
+        self._log(f"HTTP CONNECT completed in {time.time()-start:.3f}s")
         return sock
 
     def _socks5_connect(self, sock: socket.socket, host: str, port: int) -> socket.socket:
         """Perform SOCKS5 handshake."""
         proxy = self._proxy
+        start = time.time()
+
+        self._log(f"Performing SOCKS5 handshake...")
 
         # Initial greeting
         if proxy.username and proxy.password:
@@ -345,6 +377,7 @@ class TLSHttpClient:
             }
             raise ConnectionError(f"SOCKS5 connect failed: {errors.get(response[1], response[1])}")
 
+        self._log(f"SOCKS5 handshake completed in {time.time()-start:.3f}s")
         return sock
 
     def _create_ssl_context(self) -> ssl.SSLContext:
@@ -393,15 +426,21 @@ class TLSHttpClient:
         if self._proxy:
             return self._connect_via_proxy(host, port)
         else:
+            self._log(f"Connecting directly to {host}:{port}...")
+            start = time.time()
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._timeout)
             sock.connect((host, port))
+            self._log(f"Direct connection established in {time.time()-start:.3f}s")
             return sock
 
     def _wrap_ssl(self, sock: socket.socket, host: str) -> ssl.SSLSocket:
         """Wrap socket with SSL using custom fingerprint."""
+        self._log(f"Starting SSL/TLS handshake with {host}...")
+        start = time.time()
         context = self._create_ssl_context()
         ssl_sock = context.wrap_socket(sock, server_hostname=host)
+        self._log(f"SSL/TLS handshake completed in {time.time()-start:.3f}s")
         return ssl_sock
 
     def _parse_response(self, data: bytes) -> HttpResponse:
@@ -540,7 +579,11 @@ class TLSHttpClient:
         Returns:
             HttpResponse object
         """
+        total_start = time.time()
+        self._log(f"=== Starting {method} request to {url} ===")
+
         # Parse URL
+        self._log("Parsing URL...")
         parsed = urlparse(url)
         host = parsed.hostname or "localhost"
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -549,6 +592,7 @@ class TLSHttpClient:
             path += f"?{parsed.query}"
 
         is_https = parsed.scheme == "https"
+        self._log(f"Target: {host}:{port}, path={path}, https={is_https}")
 
         # Prepare body
         req_body = None
@@ -564,28 +608,55 @@ class TLSHttpClient:
             else:
                 req_body = body
 
+        # DNS resolution (prefer IPv4 to avoid IPv6 timeout delays)
+        dns_start = time.time()
+        self._log(f"Resolving DNS for {host}...")
+        try:
+            # Use getaddrinfo with IPv4 only to avoid 30s IPv6 timeout
+            addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            if addr_info:
+                ip = addr_info[0][4][0]
+            else:
+                ip = socket.gethostbyname(host)
+            self._log(f"DNS resolved: {host} -> {ip} ({time.time()-dns_start:.3f}s)")
+        except socket.gaierror as e:
+            self._log(f"DNS resolution failed: {e}")
+            raise
+
         # Create connection
+        conn_start = time.time()
         sock = self._create_connection(host, port)
+        self._log(f"Connection phase took {time.time()-conn_start:.3f}s")
 
         try:
             # Wrap with SSL if HTTPS
             if is_https:
+                ssl_start = time.time()
                 sock = self._wrap_ssl(sock, host)
+                self._log(f"SSL phase took {time.time()-ssl_start:.3f}s")
 
             # Build and send request
+            send_start = time.time()
             request_data = self._build_request(method, path, host, headers, req_body)
+            self._log(f"Sending request ({len(request_data)} bytes)...")
             sock.sendall(request_data)
+            self._log(f"Request sent in {time.time()-send_start:.3f}s")
 
             # Read response
+            recv_start = time.time()
+            self._log("Waiting for response...")
             response_data = b""
             sock.settimeout(timeout or self._timeout)
+            response_complete = False
 
-            while True:
+            while not response_complete:
                 try:
                     chunk = sock.recv(8192)
                     if not chunk:
+                        self._log("Connection closed by server")
                         break
                     response_data += chunk
+                    self._log(f"Received {len(chunk)} bytes (total: {len(response_data)})")
 
                     # Check if we have complete headers
                     if b"\r\n\r\n" in response_data:
@@ -599,18 +670,26 @@ class TLSHttpClient:
                                     content_length = int(line.split(":")[1].strip())
                                     body_start = response_data.find(b"\r\n\r\n") + 4
                                     if len(response_data) >= body_start + content_length:
-                                        break
+                                        self._log("Response complete (Content-Length satisfied)")
+                                        response_complete = True
+                                    break  # Break out of for loop
                         elif b"Transfer-Encoding: chunked" in header_part:
                             # Chunked encoding - read until 0\r\n\r\n
                             if b"\r\n0\r\n\r\n" in response_data:
-                                break
+                                self._log("Response complete (chunked encoding done)")
+                                response_complete = True
                         else:
                             # No content-length, read until connection closes
                             pass
                 except socket.timeout:
+                    self._log("Socket timeout while reading response")
                     break
 
-            return self._parse_response(response_data)
+            self._log(f"Response received in {time.time()-recv_start:.3f}s (total: {len(response_data)} bytes)")
+
+            response = self._parse_response(response_data)
+            self._log(f"=== Request completed in {time.time()-total_start:.3f}s (status: {response.status_code}) ===")
+            return response
 
         finally:
             sock.close()
@@ -658,6 +737,7 @@ def get(
     browser_type: str = "chrome",
     proxy: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
+    debug: bool = False,
     **kwargs
 ) -> HttpResponse:
     """
@@ -668,11 +748,12 @@ def get(
         browser_type: Browser fingerprint type
         proxy: Proxy URL (http://, https://, socks5://)
         headers: Additional headers
+        debug: Enable debug logging
 
     Returns:
         HttpResponse object
     """
-    client = TLSHttpClient(browser_type=browser_type, proxy=proxy)
+    client = TLSHttpClient(browser_type=browser_type, proxy=proxy, debug=debug)
     return client.get(url, headers=headers, **kwargs)
 
 
@@ -682,6 +763,7 @@ def post(
     proxy: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
     body: Optional[Union[bytes, str, Dict[str, Any]]] = None,
+    debug: bool = False,
     **kwargs
 ) -> HttpResponse:
     """
@@ -693,11 +775,12 @@ def post(
         proxy: Proxy URL
         headers: Additional headers
         body: Request body
+        debug: Enable debug logging
 
     Returns:
         HttpResponse object
     """
-    client = TLSHttpClient(browser_type=browser_type, proxy=proxy)
+    client = TLSHttpClient(browser_type=browser_type, proxy=proxy, debug=debug)
     return client.post(url, headers=headers, body=body, **kwargs)
 
 
