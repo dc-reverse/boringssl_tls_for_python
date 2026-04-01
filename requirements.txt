@@ -1,0 +1,14 @@
+# TLS Fingerprint Library - Python Dependencies
+
+# Runtime dependencies
+requests>=2.28.0
+
+# Build dependencies (for compiling C++ extension)
+pybind11>=2.10.0
+
+# Build tools
+wheel
+setuptools>=61.0
+
+# Optional: For building wheels
+build
