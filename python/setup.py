@@ -1,27 +1,33 @@
 """
 Setup script for TLS Fingerprint Library - Python Package
 Supports: macOS (Intel/ARM), Windows (MSVC), Linux (GCC)
+Uses BoringSSL for TLS fingerprint generation
 """
 
 import os
 import sys
+import platform
 from pathlib import Path
 from setuptools import setup, find_packages, Extension
 
-# Determine paths
+# Determine paths - use local files for cibuildwheel compatibility
 python_dir = Path(__file__).parent.resolve()
-project_root = python_dir.parent
 
-# Source files
+# Source files (local copies for cibuildwheel)
 sources = [
-    str(project_root / "src" / "tls_fingerprint_config.cc"),
-    str(project_root / "src" / "tls_fingerprint_generator.cc"),
-    str(python_dir / "tls_fingerprint" / "_bindings.cc"),
+    python_dir / "src" / "tls_fingerprint_config.cc",
+    python_dir / "src" / "tls_fingerprint_generator.cc",
+    python_dir / "tls_fingerprint" / "_bindings.cc",
 ]
+
+# Verify sources exist
+missing = [s for s in sources if not s.exists()]
+if missing:
+    print(f"WARNING: Missing source files: {missing}")
 
 # Include directories
 include_dirs = [
-    str(project_root / "include"),
+    python_dir / "include",
 ]
 
 # Try to get pybind11 include
@@ -32,26 +38,21 @@ try:
 except ImportError:
     pass
 
-# Compiler flags
-extra_compile_args = [
-    "-std=c++17",
-    "-O3",
-    "-fPIC",
-    "-DNDEBUG",
-]
-
-# Linker flags
-extra_link_args = []
-
-# Platform-specific settings
+# Platform-specific compiler and linker flags
 if sys.platform == "darwin":
-    # macOS - use -stdlib=libc++ for compatibility
-    extra_compile_args.append("-stdlib=libc++")
-    extra_compile_args.append("-mmacosx-version-min=10.14")
-    # Strip unused symbols
-    extra_link_args.extend(["-Wl,-dead_strip"])
+    # macOS - Clang
+    extra_compile_args = [
+        "-std=c++17",
+        "-O3",
+        "-fPIC",
+        "-stdlib=libc++",
+        "-mmacosx-version-min=10.14",
+        "-DNDEBUG",
+    ]
+    extra_link_args = ["-Wl,-dead_strip"]
+
 elif sys.platform == "win32":
-    # Windows MSVC
+    # Windows - MSVC
     extra_compile_args = [
         "/std:c++17",
         "/O2",
@@ -60,16 +61,24 @@ elif sys.platform == "win32":
         "/MD",
     ]
     extra_link_args = []
-elif sys.platform.startswith("linux"):
-    # Linux - statically link libstdc++ and libgcc to avoid dependency issues
-    extra_link_args.extend(["-static-libstdc++", "-static-libgcc"])
+
+else:
+    # Linux - GCC
+    extra_compile_args = [
+        "-std=c++17",
+        "-O3",
+        "-fPIC",
+        "-DNDEBUG",
+    ]
+    # Statically link libstdc++ and libgcc for portability
+    extra_link_args = ["-static-libstdc++", "-static-libgcc"]
 
 # Define the extension
 ext_modules = [
     Extension(
         "tls_fingerprint._tls_fingerprint",
-        sources=sources,
-        include_dirs=include_dirs,
+        sources=[str(s) for s in sources],
+        include_dirs=[str(d) for d in include_dirs],
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
         language="c++",
@@ -83,16 +92,16 @@ long_desc = readme.read_text() if readme.exists() else ""
 setup(
     name="tls-fingerprint",
     version="1.0.0",
-    description="Chromium-based TLS fingerprint library",
+    description="Chromium-based TLS fingerprint library using BoringSSL",
     long_description=long_desc,
     long_description_content_type="text/markdown",
     packages=find_packages(exclude=["tests*", "build*", "dist*"]),
     ext_modules=ext_modules,
-    package_data={"tls_fingerprint": ["*.py"]},
+    package_data={"tls_fingerprint": ["*.py", "py.typed"]},
     include_package_data=True,
     zip_safe=False,
     python_requires=">=3.8",
-    install_requires=[],
+    install_requires=["requests>=2.28.0"],
     classifiers=[
         "License :: OSI Approved :: BSD License",
         "Programming Language :: Python :: 3",
@@ -101,6 +110,9 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: C++",
         "Topic :: Security",
+        "Topic :: Internet :: WWW/HTTP",
+        "Operating System :: OS Independent",
     ],
 )
