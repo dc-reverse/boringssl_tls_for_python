@@ -52,7 +52,7 @@ set INSTALL_DIR=%BORINGSSL_DIR%\install
 REM Check BoringSSL source
 if not exist "%BORINGSSL_DIR%\CMakeLists.txt" (
     echo ERROR: BoringSSL source not found at %BORINGSSL_DIR%
-    echo Please run: git submodule update --init --recursive
+    echo Please ensure the repository was cloned correctly.
     exit /b 1
 )
 

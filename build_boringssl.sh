@@ -66,25 +66,9 @@ fi
 
 # Check BoringSSL source
 if [ ! -f "${BORINGSSL_DIR}/CMakeLists.txt" ]; then
-    echo "BoringSSL source not found, attempting to initialize submodule..."
-
-    # Check if we're in a git repo
-    if [ -d "${SCRIPT_DIR}/.git" ]; then
-        echo "Running: git submodule update --init --recursive"
-        cd "${SCRIPT_DIR}"
-        git submodule update --init --recursive
-
-        if [ ! -f "${BORINGSSL_DIR}/CMakeLists.txt" ]; then
-            echo "ERROR: Failed to initialize BoringSSL submodule!"
-            exit 1
-        fi
-        echo "Submodule initialized successfully."
-    else
-        echo "ERROR: BoringSSL source not found and not a git repository!"
-        echo "Please clone the repository with: git clone --recursive <url>"
-        echo "Or if already cloned, run: git submodule update --init --recursive"
-        exit 1
-    fi
+    echo "ERROR: BoringSSL source not found at ${BORINGSSL_DIR}"
+    echo "Please ensure the repository was cloned correctly."
+    exit 1
 fi
 
 # Create directories
