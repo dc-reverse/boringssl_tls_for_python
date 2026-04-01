@@ -6,17 +6,14 @@ Uses BoringSSL for TLS fingerprint generation
 
 import os
 import sys
-import platform
 from pathlib import Path
 from setuptools import setup, find_packages, Extension
 
-# Determine paths
+# Determine paths - use relative paths for setuptools compatibility
 python_dir = Path(__file__).parent.resolve()
-project_root = python_dir.parent
 
-# BoringSSL paths - check environment variables first, then default locations
-boringssl_root = project_root / "third_party" / "boringssl"
-boringssl_install = boringssl_root / "install"
+# BoringSSL paths - relative to python directory
+boringssl_install = python_dir.parent / "third_party" / "boringssl" / "install"
 
 # Environment variables take precedence (for cibuildwheel)
 boringssl_include = os.environ.get(
@@ -31,29 +28,29 @@ boringssl_lib = os.environ.get(
 print(f"BoringSSL include: {boringssl_include}")
 print(f"BoringSSL lib: {boringssl_lib}")
 
-# Source files
+# Source files - use relative paths
 sources = [
-    python_dir / "src" / "tls_fingerprint_config.cc",
-    python_dir / "src" / "tls_fingerprint_generator.cc",
-    python_dir / "tls_fingerprint" / "_bindings.cc",
+    "src/tls_fingerprint_config.cc",
+    "src/tls_fingerprint_generator.cc",
+    "tls_fingerprint/_bindings.cc",
 ]
 
 # Include directories
 include_dirs = [
-    python_dir / "include",
-    Path(boringssl_include),
+    "include",
+    boringssl_include,
 ]
 
 # Try to get pybind11 include
 try:
     import pybind11
-    include_dirs.append(Path(pybind11.get_include()))
-    include_dirs.append(Path(pybind11.get_include(user=True)))
+    include_dirs.append(pybind11.get_include())
+    include_dirs.append(pybind11.get_include(user=True))
 except ImportError:
     pass
 
 # Library directories
-library_dirs = [Path(boringssl_lib)]
+library_dirs = [boringssl_lib]
 
 # Platform-specific configuration
 if sys.platform == "darwin":
@@ -79,7 +76,6 @@ elif sys.platform == "win32":
         "/MD",
     ]
     extra_link_args = []
-    # On Windows, the libs are named ssl.lib and crypto.lib
     libraries = ["ssl", "crypto", "ws2_32", "advapi32", "crypt32"]
 
 else:
@@ -93,33 +89,25 @@ else:
     extra_link_args = ["-static-libstdc++", "-static-libgcc"]
     libraries = ["ssl", "crypto", "pthread", "dl"]
 
-# Filter existing source files
-existing_sources = [str(s) for s in sources if s.exists()]
-missing_sources = [s for s in sources if not s.exists()]
-if missing_sources:
-    print(f"WARNING: Missing source files: {missing_sources}")
+# Check if required files exist
+boringssl_include_path = Path(boringssl_include)
+boringssl_lib_path = Path(boringssl_lib)
 
-# Filter existing include directories
-existing_include_dirs = [str(d) for d in include_dirs if d.exists()]
-if not existing_include_dirs:
-    print("ERROR: No include directories found!")
-elif len(existing_include_dirs) < len(include_dirs):
-    missing_includes = [str(d) for d in include_dirs if not d.exists()]
-    print(f"WARNING: Missing include directories: {missing_includes}")
+if not boringssl_include_path.exists():
+    print(f"ERROR: BoringSSL include directory not found: {boringssl_include}")
+    print("Please build BoringSSL first or set BORINGSSL_INCLUDE environment variable")
 
-# Filter existing library directories
-existing_library_dirs = [str(d) for d in library_dirs if d.exists()]
-if not existing_library_dirs:
-    print("ERROR: No library directories found!")
-    print(f"Expected: {library_dirs}")
+if not boringssl_lib_path.exists():
+    print(f"ERROR: BoringSSL lib directory not found: {boringssl_lib}")
+    print("Please build BoringSSL first or set BORINGSSL_LIB environment variable")
 
 # Define the extension
 ext_modules = [
     Extension(
         "tls_fingerprint._tls_fingerprint",
-        sources=existing_sources,
-        include_dirs=existing_include_dirs,
-        library_dirs=existing_library_dirs,
+        sources=sources,
+        include_dirs=include_dirs,
+        library_dirs=library_dirs,
         libraries=libraries,
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
