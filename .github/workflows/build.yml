@@ -11,20 +11,34 @@ on:
 
 jobs:
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Linux
           - os: ubuntu-latest
             platform: linux
+            arch: x86_64
+
+          # Windows
           - os: windows-latest
             platform: windows
+            arch: AMD64
+
+          # macOS 13 - Intel (x86_64)
           - os: macos-13
             platform: macos
             arch: x86_64
+
+          # macOS 14 - M1/M2/M3 (arm64)
           - os: macos-14
+            platform: macos
+            arch: arm64
+
+          # macOS 15 - M3/M4 (arm64)
+          - os: macos-15
             platform: macos
             arch: arm64
 
@@ -49,9 +63,7 @@ jobs:
           CIBW_SKIP: "pp* *-musllinux_*"
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
-          # Pre-install pybind11 in the build environment
           CIBW_BEFORE_BUILD: "pip install pybind11"
-          # Allowlibstdc++ dynamic linking
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel} || cp {wheel} {dest_dir}/"
 
       - name: Build wheels (Windows)
@@ -64,24 +76,32 @@ jobs:
           CIBW_ARCHS_WINDOWS: AMD64
           CIBW_BEFORE_BUILD: "pip install pybind11"
 
-      - name: Build wheels (macOS)
-        if: matrix.platform == 'macos'
+      - name: Build wheels (macOS Intel)
+        if: matrix.platform == 'macos' && matrix.arch == 'x86_64'
         run: cibuildwheel --output-dir wheelhouse
         working-directory: python
         env:
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
           CIBW_SKIP: "pp*"
-          CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+          CIBW_ARCHS_MACOS: x86_64
           CIBW_BEFORE_BUILD: "pip install pybind11"
-          # macOS deployment target
           MACOSX_DEPLOYMENT_TARGET: "10.14"
-          # Don't require specific arch check
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel --require-archs=${{ matrix.arch }} -w {dest_dir} -v {wheel} || delocate-wheel -w {dest_dir} -v {wheel}"
+
+      - name: Build wheels (macOS ARM)
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: cibuildwheel --output-dir wheelhouse
+        working-directory: python
+        env:
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
+          CIBW_SKIP: "pp*"
+          CIBW_ARCHS_MACOS: arm64
+          CIBW_BEFORE_BUILD: "pip install pybind11"
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ matrix.arch || 'x86_64' }}
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: python/wheelhouse/*.whl
           retention-days: 30
 
