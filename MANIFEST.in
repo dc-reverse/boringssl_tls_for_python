@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+recursive-include src *.cc
+recursive-include include *.h
+recursive-include python *.py *.cc
+exclude python/build/**/*
+exclude python/dist/**/*
+exclude python/*.egg-info/**/*

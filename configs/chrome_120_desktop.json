@@ -1,0 +1,45 @@
+{
+  "name": "chrome_120_desktop",
+  "description": "Chrome 120 desktop fingerprint",
+  "version_min": "TLS1.2",
+  "version_max": "TLS1.3",
+
+  "cipher_suites": [
+    {"id": "0x1301", "name": "TLS_AES_128_GCM_SHA256"},
+    {"id": "0x1302", "name": "TLS_AES_256_GCM_SHA384"},
+    {"id": "0x1303", "name": "TLS_CHACHA20_POLY1305_SHA256"},
+    {"id": "0xC02B", "name": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"},
+    {"id": "0xC02F", "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+    {"id": "0xC02C", "name": "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"},
+    {"id": "0xC030", "name": "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"},
+    {"id": "0xCCA9", "name": "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256"},
+    {"id": "0xCCA8", "name": "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"}
+  ],
+
+  "signature_algorithms": [
+    {"id": "0x0403", "name": "ECDSA_SECP256R1_SHA256"},
+    {"id": "0x0804", "name": "RSA_PSS_RSAE_SHA256"},
+    {"id": "0x0401", "name": "RSA_PKCS1_SHA256"},
+    {"id": "0x0503", "name": "ECDSA_SECP384R1_SHA384"},
+    {"id": "0x0805", "name": "RSA_PSS_RSAE_SHA384"},
+    {"id": "0x0501", "name": "RSA_PKCS1_SHA384"},
+    {"id": "0x0806", "name": "RSA_PSS_RSAE_SHA512"},
+    {"id": "0x0601", "name": "RSA_PKCS1_SHA512"}
+  ],
+
+  "named_groups": [
+    {"id": "0x001D", "name": "x25519"},
+    {"id": "0x0017", "name": "secp256r1"},
+    {"id": "0x0018", "name": "secp384r1"}
+  ],
+
+  "alpn_protocols": ["h2", "http/1.1"],
+
+  "extensions": {
+    "permute": true,
+    "enable_grease": true,
+    "enable_ech": false,
+    "enable_sct": true,
+    "enable_ocsp_stapling": true
+  }
+}

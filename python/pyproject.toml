@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "pybind11>=2.10.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tls-fingerprint"
+version = "1.0.0"
+description = "Chromium-based TLS fingerprint library for Python"
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.8"
+dependencies = []
+authors = [
+    {name = "TLS Fingerprint Team"}
+]
+keywords = ["tls", "ssl", "fingerprint", "chromium", "browser", "ja3"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/tls-fingerprint"
+Documentation = "https://github.com/example/tls-fingerprint#readme"
+Repository = "https://github.com/example/tls-fingerprint"
+
+# cibuildwheel configuration for multi-platform builds
+[tool.cibuildwheel]
+build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
+skip = "pp* *-musllinux_* *-win32"
+
+[tool.cibuildwheel.macos]
+archs = "x86_64 arm64"
+
+[tool.cibuildwheel.linux]
+archs = "x86_64"
+manylinux-x86_64-image = "manylinux2014"
+
+[tool.cibuildwheel.windows]
+archs = "AMD64"
