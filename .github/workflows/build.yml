@@ -9,10 +9,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  # BoringSSL build configuration
-  BORINGSSL_VERSION: "master"
-
 jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.arch || 'x86_64' }})
@@ -49,42 +45,31 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install build tools (Ubuntu)
-        if: matrix.platform == 'linux'
+      - name: Install build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
           python -m pip install --upgrade pip
-          pip install cibuildwheel pybind11
+          pip install cibuildwheel
 
-      - name: Install build tools (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew install cmake ninja nasm
-          python -m pip install --upgrade pip
-          pip install cibuildwheel pybind11
-
-      - name: Install build tools (Windows)
+      - name: Install Ninja and NASM (Windows)
         if: matrix.platform == 'windows'
         run: |
           choco install ninja nasm -y
-          python -m pip install --upgrade pip
-          pip install cibuildwheel pybind11
 
       - name: Setup MSVC (Windows)
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build BoringSSL (Ubuntu/macOS)
+      - name: Build BoringSSL (Unix)
         if: matrix.platform != 'windows'
         run: |
-          echo "Building BoringSSL for ${{ matrix.platform }} ${${{ matrix.arch }}}..."
+          set -ex
+          echo "Building BoringSSL..."
+          echo "Source: $PWD/third_party/boringssl"
+          ls -la third_party/boringssl/
 
-          # Create build directory
           mkdir -p build/boringssl
-
-          # Configure BoringSSL
           cd build/boringssl
+
           cmake ../../third_party/boringssl \
             -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -92,28 +77,47 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DOPENSSL_SMALL=1
 
-          # Build
-          ninja
+          ninja -v
+
+          echo "Build complete. Contents of build dir:"
+          ls -la
 
           # Create install directory
           mkdir -p ../../third_party/boringssl/install/lib
           mkdir -p ../../third_party/boringssl/install/include
 
           # Copy libraries
-          cp libssl.a ../../third_party/boringssl/install/lib/
-          cp libcrypto.a ../../third_party/boringssl/install/lib/
+          if [ -f libssl.a ]; then
+            cp libssl.a ../../third_party/boringssl/install/lib/
+            cp libcrypto.a ../../third_party/boringssl/install/lib/
+            echo "Copied static libraries:"
+            ls -la ../../third_party/boringssl/install/lib/
+          elif [ -f libssl.dylib ]; then
+            cp libssl.dylib ../../third_party/boringssl/install/lib/
+            cp libcrypto.dylib ../../third_party/boringssl/install/lib/
+            echo "Copied dynamic libraries:"
+            ls -la ../../third_party/boringssl/install/lib/
+          else
+            echo "ERROR: Could not find BoringSSL libraries!"
+            find . -name "*.a" -o -name "*.dylib" -o -name "*.lib" 2>/dev/null
+            exit 1
+          fi
 
-          # Copy headers (already exist in source)
+          # Copy headers
           cp -r ../../third_party/boringssl/include/* ../../third_party/boringssl/install/include/
 
-          echo "BoringSSL built successfully!"
+          echo "BoringSSL installation complete:"
+          ls -la ../../third_party/boringssl/install/
           ls -la ../../third_party/boringssl/install/lib/
+          ls -la ../../third_party/boringssl/install/include/
 
       - name: Build BoringSSL (Windows)
         if: matrix.platform == 'windows'
         shell: cmd
         run: |
-          echo Building BoringSSL for Windows...
+          echo Building BoringSSL...
+          echo Source: %CD%\third_party\boringssl
+          dir /s third_party\boringssl
 
           mkdir build\boringssl
           cd build\boringssl
@@ -125,20 +129,46 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF ^
             -DOPENSSL_SMALL=1
 
-          ninja
+          ninja -v
+
+          echo Build complete. Contents of build dir:
+          dir
 
           mkdir ..\..\third_party\boringssl\install\lib
           mkdir ..\..\third_party\boringssl\install\include
 
-          copy ssl.lib ..\..\third_party\boringssl\install\lib\
-          copy crypto.lib ..\..\third_party\boringssl\install\lib\
+          if exist ssl.lib (
+            copy ssl.lib ..\..\third_party\boringssl\install\lib\
+            copy crypto.lib ..\..\third_party\boringssl\install\lib\
+            echo Copied Windows libraries:
+            dir ..\..\third_party\boringssl\install\lib
+          ) else (
+            echo ERROR: Could not find BoringSSL libraries!
+            dir /s /b *.lib
+            exit 1
+          )
+
           xcopy ..\..\third_party\boringssl\include\* ..\..\third_party\boringssl\install\include\ /E /Y
 
-          echo BoringSSL built successfully!
+          echo BoringSSL installation complete:
+          dir ..\..\third_party\boringssl\install\
           dir ..\..\third_party\boringssl\install\lib\
+          dir ..\..\third_party\boringssl\install\include\
 
       - name: Build wheels
-        run: cibuildwheel --output-dir wheelhouse
+        run: |
+          echo "Python directory contents:"
+          ls -la python/
+          echo "Python src contents:"
+          ls -la python/src/ 2>/dev/null || echo "No src dir"
+          echo "Python include contents:"
+          ls -la python/include/ 2>/dev/null || echo "No include dir"
+          echo "BoringSSL install contents:"
+          ls -la third_party/boringssl/install/ 2>/dev/null || echo "No install dir"
+          echo "BoringSSL lib contents:"
+          ls -la third_party/boringssl/install/lib/ 2>/dev/null || echo "No lib dir"
+
+          cibuildwheel --output-dir wheelhouse
         working-directory: python
         env:
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
@@ -151,8 +181,8 @@ jobs:
             BORINGSSL_INCLUDE=/project/third_party/boringssl/install/include
             BORINGSSL_LIB=/project/third_party/boringssl/install/lib
           CIBW_ENVIRONMENT_WINDOWS: >-
-            BORINGSSL_INCLUDE=D:\a\boringssl_tls_for_python\boringssl_tls_for_python\third_party\boringssl\install\include
-            BORINGSSL_LIB=D:\a\boringssl_tls_for_python\boringssl_tls_for_python\third_party\boringssl\install\lib
+            BORINGSSL_INCLUDE=D:\a\dc-reverse\boringssl_tls_for_python\dc-reverse\boringssl_tls_for_python\third_party\boringssl\install\include
+            BORINGSSL_LIB=D:\a\dc-reverse\boringssl_tls_for_python\dc-reverse\boringssl_tls_for_python\third_party\boringssl\install\lib
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.arch == 'arm64' && '11.0' || '10.14' }}
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel -w {dest_dir} -v {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
