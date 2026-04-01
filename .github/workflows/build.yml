@@ -36,6 +36,10 @@ jobs:
         env:
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
           CIBW_SKIP: "pp* *-musllinux_* *-win32"
+          # Skip wheel repair since we have pure Python fallback
+          CIBW_REPAIR_WHEEL_COMMAND: ""
+          # For macOS, don't require specific arch
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
 
       - uses: actions/upload-artifact@v4
         with:
