@@ -18,7 +18,6 @@ Quick Start:
 """
 
 import sys
-
 import os
 
 __version__ = "1.0.0"
@@ -27,8 +26,6 @@ __author__ = "TLS Fingerprint Team"
 # Try to import C extension, fall back to pure Python
 _use_native = False
 _native_module = None
-
-_constants_loaded = False
 
 def _try_load_native():
     """Try to load the native C extension."""
@@ -48,27 +45,55 @@ def _try_load_native():
         # Any other error (like GIL issues), use pure Python
         return None
 
+# Load native module at import time
+_native = _try_load_native()
 
-    return None
+# Import core classes - prefer native, fallback to pure Python
+if _native:
+    TLSFingerprintConfig = _native.TLSFingerprintConfig
+    TLSFingerprintGenerator = _native.TLSFingerprintGenerator
+    BrowserFingerprints = _native.BrowserFingerprints
+    BoringSSLSocket = _native.BoringSSLSocket
+    SSLConnectionInfo = _native.SSLConnectionInfo
 
+    # Constants from native
+    TLS_AES_128_GCM_SHA256 = _native.TLS_AES_128_GCM_SHA256
+    TLS_AES_256_GCM_SHA384 = _native.TLS_AES_256_GCM_SHA384
+    TLS_CHACHA20_POLY1305_SHA256 = _native.TLS_CHACHA20_POLY1305_SHA256
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = _native.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = _native.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    ECDSA_SECP256R1_SHA256 = _native.ECDSA_SECP256R1_SHA256
+    RSA_PSS_RSAE_SHA256 = _native.RSA_PSS_RSAE_SHA256
+    X25519 = _native.X25519
+    SECP256R1 = _native.SECP256R1
+    SECP384R1 = _native.SECP384R1
+else:
+    # Pure Python fallback
+    from .pure_python import (
+        TLSFingerprintConfig,
+        TLSFingerprintGenerator,
+        BrowserFingerprints,
+        # Constants
+        TLS_AES_128_GCM_SHA256,
+        TLS_AES_256_GCM_SHA384,
+        TLS_CHACHA20_POLY1305_SHA256,
+        TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        ECDSA_SECP256R1_SHA256,
+        RSA_PSS_RSAE_SHA256,
+        X25519,
+        SECP256R1,
+        SECP384R1,
+    )
 
-# Import pure Python implementation as fallback
-from .pure_python import (
-    TLSFingerprintConfig,
-    TLSFingerprintGenerator,
-    BrowserFingerprints,
-    # Constants
-    TLS_AES_128_GCM_SHA256,
-    TLS_AES_256_GCM_SHA384,
-    TLS_CHACHA20_POLY1305_SHA256,
-    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-    ECDSA_SECP256R1_SHA256,
-    RSA_PSS_RSAE_SHA256,
-    X25519,
-    SECP256R1,
-    SECP384R1,
-)
+    # BoringSSLSocket not available without native module
+    class BoringSSLSocket:
+        def __init__(self):
+            raise ImportError("BoringSSLSocket requires native BoringSSL extension")
+
+    class SSLConnectionInfo:
+        def __init__(self):
+            raise ImportError("SSLConnectionInfo requires native BoringSSL extension")
 
 # Import high-level Python modules
 from .session import (
@@ -92,46 +117,41 @@ from .client import (
 # Utility functions - use native if available, otherwise pure Python
 def get_cipher_suite_name(cipher_suite: int) -> str:
     """Get human-readable name for cipher suite ID."""
-    native = _try_load_native()
-    if native:
-        return native.get_cipher_suite_name(cipher_suite)
+    if _native:
+        return _native.get_cipher_suite_name(cipher_suite)
     from .pure_python import get_cipher_suite_name as _get_name
     return _get_name(cipher_suite)
 
 def get_cipher_suite_version(cipher_suite: int) -> str:
     """Get TLS version for cipher suite."""
-    native = _try_load_native()
-    if native:
-        return native.get_cipher_suite_version(cipher_suite)
+    if _native:
+        return _native.get_cipher_suite_version(cipher_suite)
     from .pure_python import get_cipher_suite_version as _get_version
     return _get_version(cipher_suite)
 
 def get_signature_algorithm_name(sig_alg: int) -> str:
     """Get human-readable name for signature algorithm ID."""
-    native = _try_load_native()
-    if native:
-        return native.get_signature_algorithm_name(sig_alg)
+    if _native:
+        return _native.get_signature_algorithm_name(sig_alg)
     from .pure_python import get_signature_algorithm_name as _get_name
     return _get_name(sig_alg)
 
 def get_named_group_name(named_group: int) -> str:
     """Get human-readable name for named group ID."""
-    native = _try_load_native()
-    if native:
-        return native.get_named_group_name(named_group)
+    if _native:
+        return _native.get_named_group_name(named_group)
     from .pure_python import get_named_group_name as _get_name
     return _get_name(named_group)
 
-# Also export TLSFingerprintAnalyzer if available from native
+# TLSFingerprintAnalyzer - wrapper for native or pure Python
 class TLSFingerprintAnalyzer:
     """TLS fingerprint analyzer (wrapper for native or pure Python)."""
 
     @staticmethod
     def identify_browser(config):
         """Identify browser type from fingerprint configuration."""
-        native = _try_load_native()
-        if native and hasattr(native, 'TLSFingerprintAnalyzer'):
-            return native.TLSFingerprintAnalyzer.identify_browser(config)
+        if _native and hasattr(_native, 'TLSFingerprintAnalyzer'):
+            return _native.TLSFingerprintAnalyzer.identify_browser(config)
         # Pure Python fallback
         from .pure_python import TLSFingerprintAnalyzer as _Analyzer
         return _Analyzer.identify_browser(config)
@@ -139,14 +159,11 @@ class TLSFingerprintAnalyzer:
     @staticmethod
     def parse_client_hello(client_hello):
         """Parse ClientHello bytes and extract configuration."""
-        native = _try_load_native()
-        if native and hasattr(native, 'TLSFingerprintAnalyzer'):
-            return native.TLSFingerprintAnalyzer.parse_client_hello(client_hello)
+        if _native and hasattr(_native, 'TLSFingerprintAnalyzer'):
+            return _native.TLSFingerprintAnalyzer.parse_client_hello(client_hello)
         # Pure Python fallback
         from .pure_python import TLSFingerprintAnalyzer as _Analyzer
         return _Analyzer.parse_client_hello(client_hello)
-
-
 
     def __repr__(self):
         return "<TLSFingerprintAnalyzer>"
@@ -157,6 +174,9 @@ __all__ = [
     "TLSFingerprintGenerator",
     "TLSFingerprintAnalyzer",
     "BrowserFingerprints",
+    # BoringSSL Socket
+    "BoringSSLSocket",
+    "SSLConnectionInfo",
     # High-level API
     "TLSSession",
     "TLSClient",

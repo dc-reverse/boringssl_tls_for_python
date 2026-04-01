@@ -32,6 +32,7 @@ print(f"BoringSSL lib: {boringssl_lib}")
 sources = [
     "src/tls_fingerprint_config.cc",
     "src/tls_fingerprint_generator.cc",
+    "src/boringssl_socket.cc",
     "tls_fingerprint/_bindings.cc",
 ]
 

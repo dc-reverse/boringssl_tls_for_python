@@ -7,6 +7,7 @@
 
 #include "tls_fingerprint/tls_fingerprint_config.h"
 #include "tls_fingerprint/tls_fingerprint_generator.h"
+#include "tls_fingerprint/boringssl_socket.h"
 
 namespace py = pybind11;
 
@@ -110,4 +111,67 @@ PYBIND11_MODULE(_tls_fingerprint, m) {
     m.attr("X25519") = static_cast<int>(tls_fingerprint::X25519);
     m.attr("SECP256R1") = static_cast<int>(tls_fingerprint::SECP256R1);
     m.attr("SECP384R1") = static_cast<int>(tls_fingerprint::SECP384R1);
+
+    // SSLConnectionInfo
+    py::class_<tls_fingerprint::SSLConnectionInfo>(m, "SSLConnectionInfo")
+        .def_readonly("negotiated_protocol", &tls_fingerprint::SSLConnectionInfo::negotiated_protocol,
+                      "Negotiated ALPN protocol")
+        .def_readonly("cipher_suite", &tls_fingerprint::SSLConnectionInfo::cipher_suite,
+                      "Negotiated cipher suite")
+        .def_readonly("version", &tls_fingerprint::SSLConnectionInfo::version,
+                      "TLS version")
+        .def_readonly("peer_cert_verified", &tls_fingerprint::SSLConnectionInfo::peer_cert_verified,
+                      "Whether peer certificate was verified")
+        .def_readonly("peer_certificate", &tls_fingerprint::SSLConnectionInfo::peer_certificate,
+                      "Peer certificate in DER format")
+        .def("__repr__", [](const tls_fingerprint::SSLConnectionInfo& info) {
+            return "<SSLConnectionInfo protocol=" + info.negotiated_protocol +
+                   " cipher=" + info.cipher_suite + " version=" + info.version + ">";
+        });
+
+    // BoringSSLSocket
+    py::class_<tls_fingerprint::BoringSSLSocket>(m, "BoringSSLSocket")
+        .def(py::init<>())
+        .def("set_config", &tls_fingerprint::BoringSSLSocket::SetConfig,
+             py::arg("config"),
+             "Set the TLS fingerprint configuration")
+        .def("connect", &tls_fingerprint::BoringSSLSocket::Connect,
+             py::arg("host"),
+             py::arg("port"),
+             py::arg("timeout_ms") = 30000,
+             "Connect to host:port using TLS")
+        .def("connect_via_proxy", &tls_fingerprint::BoringSSLSocket::ConnectViaProxy,
+             py::arg("proxy_host"),
+             py::arg("proxy_port"),
+             py::arg("target_host"),
+             py::arg("target_port"),
+             py::arg("proxy_type") = "http",
+             py::arg("timeout_ms") = 30000,
+             "Connect via HTTP/SOCKS5 proxy")
+        .def("send", [](tls_fingerprint::BoringSSLSocket& self, py::bytes data) {
+                 std::string str = data;
+                 std::vector<uint8_t> vec(str.begin(), str.end());
+                 return self.Send(vec);
+             },
+             py::arg("data"),
+             "Send bytes over TLS connection")
+        .def("recv", [](tls_fingerprint::BoringSSLSocket& self, size_t max_len) {
+                 std::vector<uint8_t> data = self.Recv(max_len);
+                 return py::bytes(reinterpret_cast<const char*>(data.data()), data.size());
+             },
+             py::arg("max_len") = 8192,
+             "Receive bytes from TLS connection")
+        .def("close", &tls_fingerprint::BoringSSLSocket::Close,
+             "Close the connection")
+        .def("is_connected", &tls_fingerprint::BoringSSLSocket::IsConnected,
+             "Check if connected")
+        .def("get_connection_info", &tls_fingerprint::BoringSSLSocket::GetConnectionInfo,
+             "Get SSL connection info")
+        .def("get_last_error", &tls_fingerprint::BoringSSLSocket::GetLastError,
+             "Get last error message")
+        .def("set_debug", &tls_fingerprint::BoringSSLSocket::SetDebug,
+             py::arg("debug"),
+             "Enable/disable debug logging")
+        .def("get_debug_log", &tls_fingerprint::BoringSSLSocket::GetDebugLog,
+             "Get debug log output");
 }

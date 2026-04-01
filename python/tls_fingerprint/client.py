@@ -3,10 +3,12 @@ TLS HTTP Client with proxy support.
 
 Provides an HTTP client that uses custom TLS fingerprints and supports
 HTTP/HTTPS/SOCKS5 proxies.
+
+This client uses BoringSSL for TLS connections to achieve browser-like
+TLS fingerprints.
 """
 
 import socket
-import ssl
 import struct
 import random
 import time
@@ -14,6 +16,13 @@ import sys
 from typing import Optional, Dict, Any, Tuple, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
+
+# Try to import BoringSSL socket from native module
+try:
+    from . import _tls_fingerprint as _native
+    _has_boringssl = True
+except ImportError:
+    _has_boringssl = False
 
 from .pure_python import (
     TLSFingerprintConfig,
@@ -109,6 +118,7 @@ class TLSHttpClient:
     Features:
     - Custom TLS fingerprint (Chrome, Firefox, Safari, etc.)
     - HTTP/HTTPS/SOCKS5 proxy support
+    - Uses BoringSSL for browser-like TLS fingerprints
     - Connection pooling via session
     - Automatic header management
     - Debug logging for troubleshooting
@@ -162,6 +172,13 @@ class TLSHttpClient:
         self._default_headers = default_headers or {}
         self._generator: Optional[TLSFingerprintGenerator] = None
         self._debug = debug
+
+        # Check if BoringSSL is available
+        if not _has_boringssl:
+            raise ImportError(
+                "BoringSSL native extension is required for TLSHttpClient. "
+                "Please rebuild the library with BoringSSL support."
+            )
 
     def _log(self, msg: str, *args):
         """Print debug log message."""
@@ -380,68 +397,75 @@ class TLSHttpClient:
         self._log(f"SOCKS5 handshake completed in {time.time()-start:.3f}s")
         return sock
 
-    def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create SSL context with custom settings."""
+    def _create_ssl_context(self):
+        """Create SSL context with custom settings (DEPRECATED - uses BoringSSL now)."""
+        # This method is kept for compatibility but is no longer used
+        # BoringSSLSocket handles TLS internally
+        import ssl
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-
-        # Set minimum version
         context.minimum_version = ssl.TLSVersion.TLSv1_2
-
-        # Disable certificate verification (for testing)
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-
-        # Set cipher suites based on config
-        config = self._session.config
-
-        # Convert cipher suite IDs to OpenSSL names
-        cipher_names = []
-        cipher_map = {
-            0x1301: "TLS_AES_128_GCM_SHA256",
-            0x1302: "TLS_AES_256_GCM_SHA384",
-            0x1303: "TLS_CHACHA20_POLY1305_SHA256",
-            0xC02B: "ECDHE-ECDSA-AES128-GCM-SHA256",
-            0xC02F: "ECDHE-RSA-AES128-GCM-SHA256",
-            0xC02C: "ECDHE-ECDSA-AES256-GCM-SHA384",
-            0xC030: "ECDHE-RSA-AES256-GCM-SHA384",
-            0xCCA9: "ECDHE-ECDSA-CHACHA20-POLY1305",
-            0xCCA8: "ECDHE-RSA-CHACHA20-POLY1305",
-        }
-
-        for cs in config.cipher_suites:
-            name = cipher_map.get(cs)
-            if name:
-                cipher_names.append(name)
-
-        if cipher_names:
-            try:
-                context.set_ciphers(":".join(cipher_names))
-            except ssl.SSLError:
-                pass  # Use default ciphers
-
         return context
 
-    def _create_connection(self, host: str, port: int) -> socket.socket:
-        """Create a connection to the target."""
+    def _create_boringssl_socket(self):
+        """Create a BoringSSL socket with the session's fingerprint config."""
+        sock = _native.BoringSSLSocket()
+        sock.set_debug(self._debug)
+
+        # The session config is already a native TLSFingerprintConfig
+        # Just set it directly
+        sock.set_config(self._session.config)
+        return sock
+
+    def _create_connection(self, host: str, port: int):
+        """Create a BoringSSL connection to the target."""
+        timeout_ms = int(self._timeout * 1000)
+
         if self._proxy:
-            return self._connect_via_proxy(host, port)
+            # Use BoringSSL's built-in proxy support
+            sock = self._create_boringssl_socket()
+            proxy_type = "socks5" if self._proxy.proxy_type in ("socks5", "socks") else "http"
+
+            self._log(f"Connecting via {proxy_type} proxy {self._proxy.host}:{self._proxy.port}...")
+            start = time.time()
+
+            result = sock.connect_via_proxy(
+                self._proxy.host,
+                self._proxy.port,
+                host,
+                port,
+                proxy_type,
+                timeout_ms
+            )
+
+            if result != 0:
+                error = sock.get_last_error()
+                sock.close()
+                raise ConnectionError(f"Proxy connection failed: {error}")
+
+            self._log(f"Proxy connection established in {time.time()-start:.3f}s")
+            return sock
         else:
+            # Direct connection
             self._log(f"Connecting directly to {host}:{port}...")
             start = time.time()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self._timeout)
-            sock.connect((host, port))
+
+            sock = self._create_boringssl_socket()
+            result = sock.connect(host, port, timeout_ms)
+
+            if result != 0:
+                error = sock.get_last_error()
+                sock.close()
+                raise ConnectionError(f"Connection failed: {error}")
+
             self._log(f"Direct connection established in {time.time()-start:.3f}s")
             return sock
 
-    def _wrap_ssl(self, sock: socket.socket, host: str) -> ssl.SSLSocket:
-        """Wrap socket with SSL using custom fingerprint."""
-        self._log(f"Starting SSL/TLS handshake with {host}...")
-        start = time.time()
-        context = self._create_ssl_context()
-        ssl_sock = context.wrap_socket(sock, server_hostname=host)
-        self._log(f"SSL/TLS handshake completed in {time.time()-start:.3f}s")
-        return ssl_sock
+    def _wrap_ssl(self, sock, host: str):
+        """Wrap socket with SSL (DEPRECATED - BoringSSLSocket handles this internally)."""
+        # BoringSSLSocket already has SSL/TLS handled
+        return sock
 
     def _parse_response(self, data: bytes) -> HttpResponse:
         """Parse HTTP response."""
@@ -629,24 +653,21 @@ class TLSHttpClient:
         self._log(f"Connection phase took {time.time()-conn_start:.3f}s")
 
         try:
-            # Wrap with SSL if HTTPS
-            if is_https:
-                ssl_start = time.time()
-                sock = self._wrap_ssl(sock, host)
-                self._log(f"SSL phase took {time.time()-ssl_start:.3f}s")
+            # BoringSSLSocket already handles SSL/TLS internally
+            # No need to wrap - connection is already SSL if using https
 
             # Build and send request
             send_start = time.time()
             request_data = self._build_request(method, path, host, headers, req_body)
             self._log(f"Sending request ({len(request_data)} bytes)...")
-            sock.sendall(request_data)
+            sock.send(request_data)
             self._log(f"Request sent in {time.time()-send_start:.3f}s")
 
             # Read response
             recv_start = time.time()
             self._log("Waiting for response...")
             response_data = b""
-            sock.settimeout(timeout or self._timeout)
+            # Note: timeout is handled at connect time for BoringSSLSocket
             response_complete = False
 
             while not response_complete:
