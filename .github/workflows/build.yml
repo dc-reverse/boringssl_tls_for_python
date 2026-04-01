@@ -9,6 +9,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # BoringSSL build configuration
+  BORINGSSL_VERSION: "master"
+
 jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.arch || 'x86_64' }})
@@ -17,27 +21,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux
           - os: ubuntu-latest
             platform: linux
             arch: x86_64
-
-          # Windows
           - os: windows-latest
             platform: windows
             arch: AMD64
-
-          # macOS 13 - Intel
           - os: macos-13
             platform: macos
             arch: x86_64
-
-          # macOS 14 - ARM (M1/M2/M3)
           - os: macos-14
             platform: macos
             arch: arm64
-
-          # macOS 15 - ARM (M3/M4)
           - os: macos-15
             platform: macos
             arch: arm64
@@ -54,101 +49,113 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install build tools (Unix)
-        if: matrix.platform != 'windows'
+      - name: Install build tools (Ubuntu)
+        if: matrix.platform == 'linux'
         run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
           python -m pip install --upgrade pip
-          pip install cibuildwheel pybind11 cmake ninja
+          pip install cibuildwheel pybind11
+
+      - name: Install build tools (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install cmake ninja nasm
+          python -m pip install --upgrade pip
+          pip install cibuildwheel pybind11
 
       - name: Install build tools (Windows)
         if: matrix.platform == 'windows'
         run: |
+          choco install ninja nasm -y
           python -m pip install --upgrade pip
-          pip install cibuildwheel pybind11 cmake ninja
+          pip install cibuildwheel pybind11
 
       - name: Setup MSVC (Windows)
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build BoringSSL (Unix)
+      - name: Build BoringSSL (Ubuntu/macOS)
         if: matrix.platform != 'windows'
         run: |
+          echo "Building BoringSSL for ${{ matrix.platform }} ${${{ matrix.arch }}}..."
+
+          # Create build directory
           mkdir -p build/boringssl
+
+          # Configure BoringSSL
           cd build/boringssl
           cmake ../../third_party/boringssl \
+            -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
-            -GNinja
+            -DOPENSSL_SMALL=1
+
+          # Build
           ninja
-          ninja install DESTDIR=../../third_party/boringssl/install
+
+          # Create install directory
+          mkdir -p ../../third_party/boringssl/install/lib
+          mkdir -p ../../third_party/boringssl/install/include
+
+          # Copy libraries
+          cp libssl.a ../../third_party/boringssl/install/lib/
+          cp libcrypto.a ../../third_party/boringssl/install/lib/
+
+          # Copy headers (already exist in source)
+          cp -r ../../third_party/boringssl/include/* ../../third_party/boringssl/install/include/
+
+          echo "BoringSSL built successfully!"
+          ls -la ../../third_party/boringssl/install/lib/
 
       - name: Build BoringSSL (Windows)
         if: matrix.platform == 'windows'
+        shell: cmd
         run: |
+          echo Building BoringSSL for Windows...
+
           mkdir build\boringssl
           cd build\boringssl
-          cmake ..\..\third_party\boringssl `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON `
-            -DBUILD_SHARED_LIBS=OFF `
-            -GNinja
+
+          cmake ..\..\third_party\boringssl ^
+            -GNinja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON ^
+            -DBUILD_SHARED_LIBS=OFF ^
+            -DOPENSSL_SMALL=1
+
           ninja
-          ninja install DESTDIR=..\..\third_party\boringssl\install
 
-      - name: Build wheels (Linux)
-        if: matrix.platform == 'linux'
+          mkdir ..\..\third_party\boringssl\install\lib
+          mkdir ..\..\third_party\boringssl\install\include
+
+          copy ssl.lib ..\..\third_party\boringssl\install\lib\
+          copy crypto.lib ..\..\third_party\boringssl\install\lib\
+          xcopy ..\..\third_party\boringssl\include\* ..\..\third_party\boringssl\install\include\ /E /Y
+
+          echo BoringSSL built successfully!
+          dir ..\..\third_party\boringssl\install\lib\
+
+      - name: Build wheels
         run: cibuildwheel --output-dir wheelhouse
         working-directory: python
         env:
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "pp* *-musllinux_*"
+          CIBW_SKIP: "pp* *-musllinux_* *-win32"
           CIBW_ARCHS_LINUX: x86_64
-          CIBW_BEFORE_BUILD: "pip install pybind11"
-          CIBW_ENVIRONMENT: >-
-            BORINGSSL_INCLUDE=/project/third_party/boringssl/install/usr/local/include
-            BORINGSSL_LIB=/project/third_party/boringssl/install/usr/local/lib
-          CIBW_REPAIR_WHEEL_COMMAND: "auditwheel repair -w {dest_dir} {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
-
-      - name: Build wheels (Windows)
-        if: matrix.platform == 'windows'
-        run: cibuildwheel --output-dir wheelhouse
-        working-directory: python
-        env:
-          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "pp* *-win32"
           CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ARCHS_MACOS: ${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}
           CIBW_BEFORE_BUILD: "pip install pybind11"
-
-      - name: Build wheels (macOS Intel)
-        if: matrix.platform == 'macos' && matrix.arch == 'x86_64'
-        run: cibuildwheel --output-dir wheelhouse
-        working-directory: python
-        env:
-          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "pp*"
-          CIBW_ARCHS_MACOS: x86_64
-          CIBW_BEFORE_BUILD: "pip install pybind11"
-          MACOSX_DEPLOYMENT_TARGET: "10.14"
           CIBW_ENVIRONMENT: >-
-            BORINGSSL_INCLUDE=/project/third_party/boringssl/install/usr/local/include
-            BORINGSSL_LIB=/project/third_party/boringssl/install/usr/local/lib
-          CIBW_REPAIR_WHEEL_COMMAND: "delocate-wheel -w {dest_dir} -v {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
-
-      - name: Build wheels (macOS ARM)
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        run: cibuildwheel --output-dir wheelhouse
-        working-directory: python
-        env:
-          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "pp*"
-          CIBW_ARCHS_MACOS: arm64
-          CIBW_BEFORE_BUILD: "pip install pybind11"
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
-          CIBW_ENVIRONMENT: >-
-            BORINGSSL_INCLUDE=/project/third_party/boringssl/install/usr/local/include
-            BORINGSSL_LIB=/project/third_party/boringssl/install/usr/local/lib
-          CIBW_REPAIR_WHEEL_COMMAND: "delocate-wheel -w {dest_dir} -v {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
+            BORINGSSL_INCLUDE=/project/third_party/boringssl/install/include
+            BORINGSSL_LIB=/project/third_party/boringssl/install/lib
+          CIBW_ENVIRONMENT_WINDOWS: >-
+            BORINGSSL_INCLUDE=D:\a\boringssl_tls_for_python\boringssl_tls_for_python\third_party\boringssl\install\include
+            BORINGSSL_LIB=D:\a\boringssl_tls_for_python\boringssl_tls_for_python\third_party\boringssl\install\lib
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.arch == 'arm64' && '11.0' || '10.14' }}
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel -w {dest_dir} -v {wheel} 2>/dev/null || cp {wheel} {dest_dir}/"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
