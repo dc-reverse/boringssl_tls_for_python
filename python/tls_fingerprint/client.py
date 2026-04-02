@@ -558,13 +558,19 @@ class TLSHttpClient:
             req_headers.update(headers)
 
         # Build pseudo-headers + regular headers
+        # Use browser-specific pseudo-header order from h2_config
+        pseudo_values = {
+            ':method': method,
+            ':authority': host,
+            ':scheme': 'https',
+            ':path': path,
+        }
         if use_hpack:
-            headers_list = [
-                (':method', method),
-                (':authority', host),
-                (':scheme', 'https'),
-                (':path', path),
-            ]
+            # Order pseudo-headers per browser fingerprint
+            headers_list = []
+            for ph in h2_config.pseudo_header_order:
+                if ph in pseudo_values:
+                    headers_list.append((ph, pseudo_values[ph]))
             for k, v in req_headers.items():
                 if k.lower() in ("host", "connection", "transfer-encoding"):
                     continue
@@ -572,12 +578,7 @@ class TLSHttpClient:
 
             encoded = encoder.encode(headers_list)
         else:
-            all_headers = {
-                ':method': method,
-                ':authority': host,
-                ':scheme': 'https',
-                ':path': path,
-            }
+            all_headers = dict(pseudo_values)
             for k, v in req_headers.items():
                 if k.lower() in ("host", "connection", "transfer-encoding"):
                     continue

@@ -181,13 +181,13 @@ class HTTP2BrowserFingerprints:
         # Safari SETTINGS in exact order (different from Chrome!)
         config.settings = [
             (HTTP2Setting.MAX_CONCURRENT_STREAMS, 100),
-            (HTTP2Setting.INITIAL_WINDOW_SIZE, 6291456),
+            (HTTP2Setting.INITIAL_WINDOW_SIZE, 2097152),
             (HTTP2Setting.MAX_FRAME_SIZE, 16384),
             (HTTP2Setting.MAX_HEADER_LIST_SIZE, 262144),
             (HTTP2Setting.ENABLE_PUSH, 0),
         ]
 
-        config.window_update_increment = 15663105
+        config.window_update_increment = 10485760
 
         # Safari pseudo-header order (unique!)
         config.pseudo_header_order = [":method", ":scheme", ":path", ":authority"]
