@@ -78,7 +78,7 @@ TLSFingerprintConfig BrowserFingerprints::ChromeDesktop() {
     config.version_min = SSL_PROTOCOL_VERSION_TLS1_2;
     config.version_max = SSL_PROTOCOL_VERSION_TLS1_3;
 
-    // Chrome 120 cipher suites (in order)
+    // Chrome 131 cipher suites (15 suites, matching real browser)
     config.cipher_suites = {
         0x1301,  // TLS_AES_128_GCM_SHA256
         0x1302,  // TLS_AES_256_GCM_SHA384
@@ -89,6 +89,13 @@ TLSFingerprintConfig BrowserFingerprints::ChromeDesktop() {
         0xC030,  // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
         0xCCA9,  // TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
         0xCCA8,  // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+        // Legacy cipher suites (required for real Chrome fingerprint)
+        0xC013,  // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+        0xC014,  // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
+        0x009C,  // TLS_RSA_WITH_AES_128_GCM_SHA256
+        0x009D,  // TLS_RSA_WITH_AES_256_GCM_SHA384
+        0x002F,  // TLS_RSA_WITH_AES_128_CBC_SHA
+        0x0035,  // TLS_RSA_WITH_AES_256_CBC_SHA
     };
 
     // Chrome 131+ signature algorithms (exact match, 13 algorithms)
@@ -140,7 +147,7 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
     config.version_min = SSL_PROTOCOL_VERSION_TLS1_2;
     config.version_max = SSL_PROTOCOL_VERSION_TLS1_3;
 
-    // Firefox cipher suites
+    // Firefox cipher suites (15 suites, Firefox order: CHACHA20 between GCM-128 and GCM-256)
     config.cipher_suites = {
         0x1301,  // TLS_AES_128_GCM_SHA256
         0x1302,  // TLS_AES_256_GCM_SHA384
@@ -151,6 +158,13 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
         0xCCA8,  // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
         0xC02C,  // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
         0xC030,  // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        // Legacy cipher suites
+        0xC013,  // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+        0xC014,  // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
+        0x009C,  // TLS_RSA_WITH_AES_128_GCM_SHA256
+        0x009D,  // TLS_RSA_WITH_AES_256_GCM_SHA384
+        0x002F,  // TLS_RSA_WITH_AES_128_CBC_SHA
+        0x0035,  // TLS_RSA_WITH_AES_256_CBC_SHA
     };
 
     // Firefox signature algorithms (BoringSSL-supported only, 11 algorithms)
@@ -168,14 +182,11 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
         0x0201,  // rsa_pkcs1_sha1
     };
 
-    // Real Firefox named groups (6 groups)
+    // Firefox named groups (BoringSSL-supported only, no ffdhe)
     config.named_groups = {
         0x001D,  // x25519
         0x0017,  // secp256r1
         0x0018,  // secp384r1
-        0x0019,  // secp521r1
-        0x0100,  // ffdhe2048
-        0x0101,  // ffdhe3072
     };
 
     config.alpn_protocols = {"h2", "http/1.1"};
@@ -221,19 +232,19 @@ TLSFingerprintConfig BrowserFingerprints::Safari() {
         0x0201,  // rsa_pkcs1_sha1
     };
 
-    // Real Safari named groups (5 groups)
+    // Real Safari named groups (BoringSSL-supported only, no ffdhe)
     config.named_groups = {
         0x001D,  // x25519
         0x0017,  // secp256r1
         0x0018,  // secp384r1
         0x0019,  // secp521r1
-        0x0100,  // ffdhe2048
     };
 
     config.alpn_protocols = {"h2", "http/1.1"};
 
+    // Safari uses GREASE (RFC 8701)
     config.permute_extensions = false;
-    config.enable_grease = false;
+    config.enable_grease = true;
 
     return config;
 }

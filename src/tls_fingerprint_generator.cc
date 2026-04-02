@@ -24,6 +24,7 @@ enum TLSExtension {
     EXT_SUPPORTED_GROUPS = 0x000A,
     EXT_EC_POINT_FORMATS = 0x000B,
     EXT_SIGNATURE_ALGORITHMS = 0x000D,
+    EXT_PADDING = 0x0015,
     EXT_ALPN = 0x0010,
     EXT_SCT = 0x0012,
     EXT_EXTENDED_MASTER_SECRET = 0x0017,
@@ -119,11 +120,21 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildClientHello(const std::string
         body.push_back(dist(GetRandomGenerator()));
     }
 
-    // Session ID (empty for TLS 1.3)
-    body.push_back(0x00);
+    // Session ID (32 bytes for TLS 1.3 middlebox compatibility, RFC 8446 D.4)
+    body.push_back(0x20);  // 32 bytes length
+    for (int i = 0; i < 32; i++) {
+        body.push_back(dist(GetRandomGenerator()));
+    }
 
-    // Cipher suites
-    WriteU16BE(body, static_cast<uint16_t>(config_.cipher_suites.size() * 2));
+    // Cipher suites (with optional GREASE at the beginning)
+    if (config_.enable_grease) {
+        std::uniform_int_distribution<size_t> grease_dist(0, 14);
+        uint16_t grease_cs = kGreaseValues[grease_dist(GetRandomGenerator())];
+        WriteU16BE(body, static_cast<uint16_t>((config_.cipher_suites.size() + 1) * 2));
+        WriteU16BE(body, grease_cs);
+    } else {
+        WriteU16BE(body, static_cast<uint16_t>(config_.cipher_suites.size() * 2));
+    }
     for (uint16_t cs : config_.cipher_suites) {
         WriteU16BE(body, cs);
     }
@@ -189,11 +200,13 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
         ext_list.emplace_back(EXT_SUPPORTED_GROUPS, groups);
     }
 
-    // EC Point Formats (Chrome sends this)
+    // EC Point Formats (Chrome sends 3 formats)
     {
         std::vector<uint8_t> ec_pf;
-        ec_pf.push_back(0x01);  // Length: 1 format
+        ec_pf.push_back(0x03);  // Length: 3 formats
         ec_pf.push_back(0x00);  // uncompressed
+        ec_pf.push_back(0x01);  // ansiX962_compressed_prime
+        ec_pf.push_back(0x02);  // ansiX962_compressed_char2
         ext_list.emplace_back(EXT_EC_POINT_FORMATS, ec_pf);
     }
 
@@ -263,11 +276,19 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
         ext_list.emplace_back(EXT_APPLICATION_SETTINGS, alps);
     }
 
-    // Supported Versions (for TLS 1.3)
+    // Supported Versions (for TLS 1.3, with optional GREASE version)
     {
         std::vector<uint8_t> versions;
-        versions.push_back(0x04);  // Supported versions length: 4 bytes (2 versions)
-        versions.push_back(0x03);  // TLS 1.3 first (preferred)
+        if (config_.enable_grease) {
+            std::uniform_int_distribution<size_t> grease_dist(0, 14);
+            uint16_t grease_ver = kGreaseValues[grease_dist(GetRandomGenerator())];
+            versions.push_back(0x05);  // 5 bytes = GREASE + TLS 1.3 + TLS 1.2
+            versions.push_back(static_cast<uint8_t>(grease_ver >> 8));
+            versions.push_back(static_cast<uint8_t>(grease_ver & 0xFF));
+        } else {
+            versions.push_back(0x03);  // 3 bytes = TLS 1.3 + TLS 1.2 (Firefox)
+        }
+        versions.push_back(0x03);  // TLS 1.3 (preferred)
         versions.push_back(0x04);
         versions.push_back(0x03);  // TLS 1.2
         versions.push_back(0x03);
@@ -338,6 +359,28 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
     // Permute extensions if enabled (Chrome randomizes since v110)
     if (config_.permute_extensions) {
         std::shuffle(ext_list.begin(), ext_list.end(), GetRandomGenerator());
+    }
+
+    // Calculate current ClientHello size and add padding if needed (Chrome behavior)
+    // Chrome pads the ClientHello to 512 bytes if it would be between 256-511 bytes
+    {
+        // Estimate total size: record header(5) + handshake header(4) + body_so_far + extensions
+        size_t ext_size = 0;
+        for (const auto& ext : ext_list) {
+            ext_size += 4 + ext.second.size();  // 2 (type) + 2 (length) + data
+        }
+        // body: version(2) + random(32) + session_id(33) + cipher_suites(2+n) + compression(2) + ext_len(2)
+        size_t body_size = 2 + 32 + 33 + 2 + config_.cipher_suites.size() * 2 + 2 + 2 + ext_size;
+        if (config_.enable_grease) body_size += 2;  // GREASE cipher suite
+        size_t total_size = 5 + 4 + body_size;  // record header + handshake header
+
+        if (total_size > 256 && total_size < 512) {
+            size_t padding_needed = 512 - total_size - 4;  // 4 for padding extension header
+            if (padding_needed > 0 && padding_needed < 65536) {
+                std::vector<uint8_t> padding_data(padding_needed, 0x00);
+                ext_list.emplace_back(EXT_PADDING, padding_data);
+            }
+        }
     }
 
     // Serialize extensions

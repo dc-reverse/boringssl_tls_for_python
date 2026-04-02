@@ -25,6 +25,13 @@ TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xC02C
 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xC030
 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 = 0xCCA9
 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 = 0xCCA8
+# Legacy cipher suites
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA = 0xC013
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA = 0xC014
+TLS_RSA_WITH_AES_128_GCM_SHA256 = 0x009C
+TLS_RSA_WITH_AES_256_GCM_SHA384 = 0x009D
+TLS_RSA_WITH_AES_128_CBC_SHA = 0x002F
+TLS_RSA_WITH_AES_256_CBC_SHA = 0x0035
 
 # Signature algorithm constants
 ECDSA_SECP256R1_SHA256 = 0x0403
@@ -62,7 +69,7 @@ class BrowserFingerprints:
 
     @staticmethod
     def chrome_desktop() -> TLSFingerprintConfig:
-        """Get Chrome desktop browser fingerprint (Chrome 120+)."""
+        """Get Chrome desktop browser fingerprint (Chrome 131+)."""
         config = TLSFingerprintConfig()
         config.cipher_suites = [
             TLS_AES_128_GCM_SHA256,
@@ -74,6 +81,13 @@ class BrowserFingerprints:
             TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
             TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
             TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+            # Legacy cipher suites
+            TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+            TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+            TLS_RSA_WITH_AES_128_GCM_SHA256,
+            TLS_RSA_WITH_AES_256_GCM_SHA384,
+            TLS_RSA_WITH_AES_128_CBC_SHA,
+            TLS_RSA_WITH_AES_256_CBC_SHA,
         ]
         # Chrome signature algorithms (only algorithms supported by BoringSSL)
         # Note: BoringSSL doesn't support brainpool curves, ed448, RSA-PSS-PSS, or DSA
@@ -125,6 +139,13 @@ class BrowserFingerprints:
             TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
             TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
             TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            # Legacy cipher suites
+            TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+            TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+            TLS_RSA_WITH_AES_128_GCM_SHA256,
+            TLS_RSA_WITH_AES_256_GCM_SHA384,
+            TLS_RSA_WITH_AES_128_CBC_SHA,
+            TLS_RSA_WITH_AES_256_CBC_SHA,
         ]
         # Firefox signature algorithms (only BoringSSL-supported algorithms)
         config.signature_algorithms = [
@@ -140,12 +161,11 @@ class BrowserFingerprints:
             0x0807,  # ed25519
             0x0201,  # rsa_pkcs1_sha1
         ]
-        # Firefox named groups (only BoringSSL-supported groups)
+        # Firefox named groups (BoringSSL-supported only, no ffdhe)
         config.named_groups = [
             0x001D,  # x25519
             0x0017,  # secp256r1
             0x0018,  # secp384r1
-            0x0019,  # secp521r1
         ]
         config.alpn_protocols = ["h2", "http/1.1"]
         config.permute_extensions = False
@@ -191,7 +211,7 @@ class BrowserFingerprints:
         ]
         config.alpn_protocols = ["h2", "http/1.1"]
         config.permute_extensions = False
-        config.enable_grease = False
+        config.enable_grease = True
         return config
 
     @staticmethod

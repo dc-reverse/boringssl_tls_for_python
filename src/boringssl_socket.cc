@@ -57,15 +57,27 @@ public:
 
     static const char* GetCipherName(uint16_t cipher_id) {
         switch (cipher_id) {
+            // TLS 1.3 (handled automatically by BoringSSL, skip in cipher list)
             case 0x1301: return "TLS_AES_128_GCM_SHA256";
             case 0x1302: return "TLS_AES_256_GCM_SHA384";
             case 0x1303: return "TLS_CHACHA20_POLY1305_SHA256";
+            // TLS 1.2 ECDHE GCM
             case 0xC02B: return "ECDHE-ECDSA-AES128-GCM-SHA256";
             case 0xC02F: return "ECDHE-RSA-AES128-GCM-SHA256";
             case 0xC02C: return "ECDHE-ECDSA-AES256-GCM-SHA384";
             case 0xC030: return "ECDHE-RSA-AES256-GCM-SHA384";
+            // TLS 1.2 ECDHE CHACHA20
             case 0xCCA9: return "ECDHE-ECDSA-CHACHA20-POLY1305";
             case 0xCCA8: return "ECDHE-RSA-CHACHA20-POLY1305";
+            // TLS 1.2 ECDHE CBC (legacy)
+            case 0xC013: return "ECDHE-RSA-AES128-SHA";
+            case 0xC014: return "ECDHE-RSA-AES256-SHA";
+            // TLS 1.2 RSA GCM (legacy)
+            case 0x009C: return "AES128-GCM-SHA256";
+            case 0x009D: return "AES256-GCM-SHA384";
+            // TLS 1.2 RSA CBC (legacy)
+            case 0x002F: return "AES128-SHA";
+            case 0x0035: return "AES256-SHA";
             default: return "UNKNOWN";
         }
     }
@@ -118,8 +130,12 @@ public:
         if (!config_.cipher_suites.empty()) {
             std::string cipher_list;
             for (uint16_t cs : config_.cipher_suites) {
+                // Skip TLS 1.3 cipher suites (BoringSSL enables them automatically)
+                if (cs >= 0x1300 && cs <= 0x13FF) continue;
+                const char* name = GetCipherName(cs);
+                if (std::string(name) == "UNKNOWN") continue;
                 if (!cipher_list.empty()) cipher_list += ":";
-                cipher_list += GetCipherName(cs);
+                cipher_list += name;
             }
 
             if (!cipher_list.empty()) {
@@ -319,6 +335,12 @@ public:
 
         SSL_set_tlsext_host_name(ssl_, hostname.c_str());
         ConfigureSSLWithFingerprint();
+
+        // Enable OCSP stapling (status_request extension, ext 5)
+        SSL_enable_ocsp_stapling(ssl_);
+        // Enable SCT (signed_certificate_timestamp extension, ext 18)
+        SSL_enable_signed_cert_timestamps(ssl_);
+
         SSL_set_fd(ssl_, sock_fd_);
 
         if (SetNonBlocking(true) < 0) {
