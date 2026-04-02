@@ -498,35 +498,52 @@ class TLSHttpClient:
         h2_config = HTTP2BrowserFingerprints.get_fingerprint(browser_type)
         frame_builder = HTTP2FrameBuilder(h2_config)
 
-        # 1. Send HTTP/2 connection preface
+        # 1. Send HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE together
         preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        sock.send(preface)
-        self._log("Sent HTTP/2 connection preface")
-
-        # 2. Send SETTINGS frame
         settings_frame = frame_builder.build_settings_frame()
-        sock.send(settings_frame)
-        self._log("Sent HTTP/2 SETTINGS frame")
-
-        # 3. Send WINDOW_UPDATE frame for connection (stream 0)
         window_update = frame_builder.build_window_update_frame(stream_id=0)
-        sock.send(window_update)
-        self._log("Sent HTTP/2 WINDOW_UPDATE frame")
+        sock.send(preface + settings_frame + window_update)
+        self._log("Sent HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE")
 
-        # 4. Wait briefly for server's SETTINGS, then ACK
+        # 2. Read server's initial frames, process SETTINGS and keep leftover
+        leftover = b""
         import time as _time
         _time.sleep(0.05)
         try:
-            server_settings = sock.recv(4096)
-            if server_settings:
-                self._log(f"Received server SETTINGS ({len(server_settings)} bytes)")
-                # Send SETTINGS ACK
-                sock.send(b'\x00\x00\x00\x04\x01\x00\x00\x00\x00')
-                self._log("Sent SETTINGS ACK")
+            server_data = sock.recv(16384)
+            if server_data:
+                self._log(f"Received server initial data ({len(server_data)} bytes)")
+                # Parse frames: ACK any SETTINGS, keep unprocessed data
+                pos = 0
+                while pos + 9 <= len(server_data):
+                    frame_len = int.from_bytes(server_data[pos:pos+3], 'big')
+                    frame_type = server_data[pos+3]
+                    frame_flags = server_data[pos+4]
+                    total = 9 + frame_len
+                    if pos + total > len(server_data):
+                        # Incomplete frame - keep from here
+                        break
+                    if frame_type == 0x04 and not (frame_flags & 0x01):
+                        # SETTINGS (not ACK) - send ACK
+                        sock.send(b'\x00\x00\x00\x04\x01\x00\x00\x00\x00')
+                        self._log("Sent SETTINGS ACK")
+                    elif frame_type == 0x04 and (frame_flags & 0x01):
+                        # SETTINGS ACK from server - skip
+                        pass
+                    elif frame_type == 0x08:
+                        # WINDOW_UPDATE - skip
+                        pass
+                    else:
+                        # Any other frame (HEADERS, DATA, GOAWAY, etc.) - keep for response reader
+                        leftover += server_data[pos:pos+total]
+                    pos += total
+                # Keep any trailing incomplete data
+                if pos < len(server_data):
+                    leftover += server_data[pos:]
         except Exception:
             pass
 
-        # 5. Build headers for the request
+        # 3. Build headers for the request
         req_headers = self._get_default_headers(host, True)
         if headers:
             req_headers.update(headers)
@@ -558,7 +575,7 @@ class TLSHttpClient:
                 all_headers[k.lower()] = v
             encoded = frame_builder._build_header_block(all_headers)
 
-        # 6. Send HEADERS frame on stream 1
+        # 4. Send HEADERS frame on stream 1
         end_stream = body is None
         flags = 0x04  # END_HEADERS
         if end_stream:
@@ -567,13 +584,13 @@ class TLSHttpClient:
         sock.send(hdr_frame)
         self._log("Sent HTTP/2 HEADERS frame")
 
-        # 7. Send DATA frame if body exists
+        # 5. Send DATA frame if body exists
         if body:
             data_frame = self._build_h2_data_frame(body, stream_id=1, end_stream=True)
             sock.send(data_frame)
 
-        # 8. Read response frames
-        return self._read_h2_response(sock)
+        # 6. Read response frames (pass leftover as pre-read data)
+        return self._read_h2_response(sock, initial_buf=leftover)
 
     def _build_h2_data_frame(self, data: bytes, stream_id: int, end_stream: bool) -> bytes:
         """Build HTTP/2 DATA frame."""
@@ -584,7 +601,7 @@ class TLSHttpClient:
         header += stream_id.to_bytes(4, 'big')
         return header + data
 
-    def _read_h2_response(self, sock) -> HttpResponse:
+    def _read_h2_response(self, sock, initial_buf: bytes = b"") -> HttpResponse:
         """Read and parse HTTP/2 response frames."""
         try:
             import hpack
@@ -598,7 +615,7 @@ class TLSHttpClient:
         stream_ended = False
         goaway_received = False
 
-        buf = b""
+        buf = initial_buf
         max_reads = 200
         import time as _time
 
@@ -606,17 +623,20 @@ class TLSHttpClient:
             if stream_ended:
                 break
 
-            # Small delay between reads
-            _time.sleep(0.05)
-
-            # Read data
-            try:
-                chunk = sock.recv(16384)
-            except Exception:
-                break
-            if not chunk:
-                break
-            buf += chunk
+            # Only read from socket if buffer doesn't have a complete frame
+            if len(buf) < 9 or len(buf) < 9 + int.from_bytes(buf[0:3], 'big'):
+                try:
+                    chunk = sock.recv(16384)
+                except Exception:
+                    if buf:
+                        # Process remaining buffer before breaking
+                        pass
+                    else:
+                        break
+                else:
+                    if not chunk:
+                        break
+                    buf += chunk
 
             # Parse frames from buffer
             while len(buf) >= 9:
