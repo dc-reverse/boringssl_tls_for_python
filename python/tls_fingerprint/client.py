@@ -415,7 +415,13 @@ class TLSHttpClient:
 
         # The session config is already a native TLSFingerprintConfig
         # Just set it directly
-        sock.set_config(self._session.config)
+        config = self._session.config
+
+        # Override ALPN to use http/1.1 only (we don't support HTTP/2 yet)
+        # This prevents h2 negotiation which would cause the server to expect HTTP/2
+        config.alpn_protocols = ["http/1.1"]
+
+        sock.set_config(config)
         return sock
 
     def _create_connection(self, host: str, port: int):
