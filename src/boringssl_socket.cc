@@ -70,6 +70,16 @@ public:
         }
     }
 
+    static const char* GetGroupName(uint16_t group_id) {
+        switch (group_id) {
+            case 0x001D: return "x25519";
+            case 0x0017: return "p256";
+            case 0x0018: return "p384";
+            case 0x0019: return "p521";
+            default: return "UNKNOWN";
+        }
+    }
+
     bool InitSSLContext() {
         if (ssl_ctx_) {
             SSL_CTX_free(ssl_ctx_);
@@ -89,32 +99,32 @@ public:
     }
 
     void ConfigureSSLWithFingerprint() {
-        if (!ssl_ || config_.cipher_suites.empty()) {
+        if (!ssl_) {
             return;
         }
 
-        // Configure cipher suites for TLS 1.2
-        std::string cipher_list;
-        for (size_t i = 0; i < config_.cipher_suites.size(); i++) {
-            if (i > 0) cipher_list += ":";
-            cipher_list += GetCipherName(config_.cipher_suites[i]);
-        }
+        // Configure cipher suites for TLS 1.2 only
+        // TLS 1.3 cipher suites in BoringSSL are handled automatically
+        if (!config_.cipher_suites.empty()) {
+            std::string cipher_list;
+            for (uint16_t cs : config_.cipher_suites) {
+                // Skip TLS 1.3 cipher suites (0x1301-0x1303) - BoringSSL handles these
+                if (cs >= 0x1301 && cs <= 0x1303) {
+                    continue;
+                }
+                if (!cipher_list.empty()) cipher_list += ":";
+                cipher_list += GetCipherName(cs);
+            }
 
-        if (!cipher_list.empty()) {
-            SSL_set_cipher_list(ssl_, cipher_list.c_str());
-        }
-
-        // Configure TLS 1.3 ciphersuites
-        std::string tls13_ciphers;
-        for (uint16_t cs : config_.cipher_suites) {
-            if (cs >= 0x1301 && cs <= 0x1303) {
-                if (!tls13_ciphers.empty()) tls13_ciphers += ":";
-                tls13_ciphers += GetCipherName(cs);
+            if (!cipher_list.empty()) {
+                if (SSL_set_cipher_list(ssl_, cipher_list.c_str()) != 1) {
+                    debugLog("Warning: Failed to set cipher list, using defaults");
+                }
             }
         }
-        if (!tls13_ciphers.empty()) {
-            SSL_set_cipher_list(ssl_, tls13_ciphers.c_str());
-        }
+
+        // Note: BoringSSL handles signature algorithms and named groups automatically
+        // Custom configuration of these may cause compatibility issues
     }
 
     int SetNonBlocking(bool non_block) {
