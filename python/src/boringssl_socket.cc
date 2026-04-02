@@ -104,7 +104,13 @@ public:
     }
 
     void ConfigureSSLWithFingerprint() {
+        // Always log configuration status (even if debug is off)
+        fprintf(stderr, "[DEBUG] ConfigureSSLWithFingerprint called\n");
+        fprintf(stderr, "[DEBUG] ssl_ = %p, cipher_suites.size() = %zu, named_groups.size() = %zu\n",
+                (void*)ssl_, config_.cipher_suites.size(), config_.named_groups.size());
+
         if (!ssl_) {
+            fprintf(stderr, "[DEBUG] ssl_ is null, returning\n");
             return;
         }
 
@@ -121,25 +127,24 @@ public:
 
             if (!cipher_list.empty()) {
                 debugLog("Setting cipher list: " + cipher_list);
+                fprintf(stderr, "[DEBUG] Setting cipher list: %s\n", cipher_list.c_str());
                 if (SSL_set_cipher_list(ssl_, cipher_list.c_str()) != 1) {
                     debugLog("Warning: Failed to set cipher list");
+                    fprintf(stderr, "[DEBUG] Failed to set cipher list\n");
                 }
             }
         }
 
-        // 2. Configure named groups (curves)
+        // 2. Configure named groups (curves) using SSL_set1_group_ids
         if (!config_.named_groups.empty()) {
-            std::string groups;
-            for (uint16_t g : config_.named_groups) {
-                if (!groups.empty()) groups += ":";
-                groups += GetGroupName(g);
-            }
+            debugLog("Setting groups: " + std::to_string(config_.named_groups.size()) + " groups");
+            fprintf(stderr, "[DEBUG] Setting %zu groups\n", config_.named_groups.size());
 
-            if (!groups.empty()) {
-                debugLog("Setting groups: " + groups);
-                if (SSL_set1_groups_list(ssl_, groups.c_str()) != 1) {
-                    debugLog("Warning: Failed to set groups list");
-                }
+            // SSL_set1_group_ids expects an array of uint16_t group IDs
+            if (SSL_set1_group_ids(ssl_, config_.named_groups.data(),
+                                    static_cast<size_t>(config_.named_groups.size())) != 1) {
+                debugLog("Warning: Failed to set group IDs");
+                fprintf(stderr, "[DEBUG] Failed to set group IDs\n");
             }
         }
 
@@ -158,13 +163,16 @@ public:
                 alpn_str += p;
             }
             debugLog("Setting ALPN: " + alpn_str);
+            fprintf(stderr, "[DEBUG] Setting ALPN: %s\n", alpn_str.c_str());
 
             if (SSL_set_alpn_protos(ssl_, alpn_data.data(), alpn_data.size()) != 0) {
                 debugLog("Warning: Failed to set ALPN protocols");
+                fprintf(stderr, "[DEBUG] Failed to set ALPN\n");
             }
         }
 
         debugLog("TLS fingerprint configuration complete");
+        fprintf(stderr, "[DEBUG] TLS fingerprint configuration complete\n");
     }
 
     int SetNonBlocking(bool non_block) {
