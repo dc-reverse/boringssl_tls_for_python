@@ -1,0 +1,162 @@
+# TLS Fingerprint Evaluation Report
+
+## Test Date: Thu Apr  2 14:46:07 CST 2026
+
+## Browser Fingerprints
+
+### CHROME
+
+- **JA3**: 771,4865-4866-4867-49195-49199-49196-49200-52393-52392,0-23-65281-10-11-35-16-13-51-45-43,4588-29-23-24-25,0
+- **JA3 Hash**: 85e765824702e6c5421dc4c23fa4830d
+- **JA4**: t13d911h1_f91f431d341e_acfa6f4c95d3
+- **JA4-R**: t13d911h1_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_000a,000b,000d,0017,0023,002b,002d,0033,ff01_0403,0503,0603,0804,0805,0806,0401,0501,0601,0201,0203,0807,0420
+
+**Cipher Suites** (10):
+  - TLS_GREASE (0x9A9A)
+  - TLS_AES_128_GCM_SHA256
+  - TLS_AES_256_GCM_SHA384
+  - TLS_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+**Supported Groups** (6):
+  - TLS_GREASE (0xfafa)
+  - X25519MLKEM768 (4588)
+  - X25519 (29)
+  - P-256 (23)
+  - P-384 (24)
+  - P-521 (25)
+
+**Signature Algorithms** (13):
+  - ecdsa_secp256r1_sha256
+  - ecdsa_secp384r1_sha384
+  - ecdsa_secp521r1_sha512
+  - rsa_pss_rsae_sha256
+  - rsa_pss_rsae_sha384
+  - rsa_pss_rsae_sha512
+  - rsa_pkcs1_sha256
+  - rsa_pkcs1_sha384
+  - rsa_pkcs1_sha512
+  - rsa_pkcs1_sha1
+  - ecdsa_sha1
+  - ed25519
+  - rsa_pkcs1_sha256_legacy
+
+### FIREFOX
+
+- **JA3**: 771,4865-4866-4867-49195-49199-52393-52392-49196-49200,0-23-65281-10-11-35-16-13-51-45-43,29-23-24-25,0
+- **JA3 Hash**: ffd6d88bcf6d738f37291de55e771866
+- **JA4**: t13d911h1_f91f431d341e_88fd1a9794d3
+- **JA4-R**: t13d911h1_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_000a,000b,000d,0017,0023,002b,002d,0033,ff01_0403,0503,0603,0804,0805,0806,0401,0501,0601,0807,0201
+
+**Cipher Suites** (9):
+  - TLS_AES_128_GCM_SHA256
+  - TLS_AES_256_GCM_SHA384
+  - TLS_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+
+**Supported Groups** (4):
+  - X25519 (29)
+  - P-256 (23)
+  - P-384 (24)
+  - P-521 (25)
+
+**Signature Algorithms** (11):
+  - ecdsa_secp256r1_sha256
+  - ecdsa_secp384r1_sha384
+  - ecdsa_secp521r1_sha512
+  - rsa_pss_rsae_sha256
+  - rsa_pss_rsae_sha384
+  - rsa_pss_rsae_sha512
+  - rsa_pkcs1_sha256
+  - rsa_pkcs1_sha384
+  - rsa_pkcs1_sha512
+  - ed25519
+  - rsa_pkcs1_sha1
+
+### SAFARI
+
+- **JA3**: 771,4865-4866-4867-49195-49199-49196-49200,0-23-65281-10-11-35-16-13-51-45-43,29-23-24-25,0
+- **JA3 Hash**: 6a35c8f4b0013e8042fa600b71f80f22
+- **JA4**: t13d711h1_04ca88ad2b9b_88fd1a9794d3
+- **JA4-R**: t13d711h1_1301,1302,1303,c02b,c02c,c02f,c030_000a,000b,000d,0017,0023,002b,002d,0033,ff01_0403,0503,0603,0804,0805,0806,0401,0501,0601,0807,0201
+
+**Cipher Suites** (7):
+  - TLS_AES_128_GCM_SHA256
+  - TLS_AES_256_GCM_SHA384
+  - TLS_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+
+**Supported Groups** (4):
+  - X25519 (29)
+  - P-256 (23)
+  - P-384 (24)
+  - P-521 (25)
+
+**Signature Algorithms** (11):
+  - ecdsa_secp256r1_sha256
+  - ecdsa_secp384r1_sha384
+  - ecdsa_secp521r1_sha512
+  - rsa_pss_rsae_sha256
+  - rsa_pss_rsae_sha384
+  - rsa_pss_rsae_sha512
+  - rsa_pkcs1_sha256
+  - rsa_pkcs1_sha384
+  - rsa_pkcs1_sha512
+  - ed25519
+  - rsa_pkcs1_sha1
+
+### EDGE
+
+- **JA3**: 771,4865-4866-4867-49195-49199-49196-49200-52393-52392,0-23-65281-10-11-35-16-13-51-45-43,4588-29-23-24-25,0
+- **JA3 Hash**: 85e765824702e6c5421dc4c23fa4830d
+- **JA4**: t13d911h1_f91f431d341e_acfa6f4c95d3
+- **JA4-R**: t13d911h1_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_000a,000b,000d,0017,0023,002b,002d,0033,ff01_0403,0503,0603,0804,0805,0806,0401,0501,0601,0201,0203,0807,0420
+
+**Cipher Suites** (10):
+  - TLS_GREASE (0x7A7A)
+  - TLS_AES_128_GCM_SHA256
+  - TLS_AES_256_GCM_SHA384
+  - TLS_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+  - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+**Supported Groups** (6):
+  - TLS_GREASE (0x5a5a)
+  - X25519MLKEM768 (4588)
+  - X25519 (29)
+  - P-256 (23)
+  - P-384 (24)
+  - P-521 (25)
+
+**Signature Algorithms** (13):
+  - ecdsa_secp256r1_sha256
+  - ecdsa_secp384r1_sha384
+  - ecdsa_secp521r1_sha512
+  - rsa_pss_rsae_sha256
+  - rsa_pss_rsae_sha384
+  - rsa_pss_rsae_sha512
+  - rsa_pkcs1_sha256
+  - rsa_pkcs1_sha384
+  - rsa_pkcs1_sha512
+  - rsa_pkcs1_sha1
+  - ecdsa_sha1
+  - ed25519
+  - rsa_pkcs1_sha256_legacy
+

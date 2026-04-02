@@ -109,6 +109,9 @@ public:
         }
 
         debugLog("Configuring TLS fingerprint...");
+        debugLog("Config: cipher_suites=" + std::to_string(config_.cipher_suites.size()) +
+                 ", signature_algorithms=" + std::to_string(config_.signature_algorithms.size()) +
+                 ", named_groups=" + std::to_string(config_.named_groups.size()));
 
         // 1. Configure cipher suites
         if (!config_.cipher_suites.empty()) {
@@ -126,12 +129,53 @@ public:
             }
         }
 
-        // 2. Configure named groups
+        // 2. Configure named groups (elliptic curves)
         if (!config_.named_groups.empty()) {
             debugLog("Setting groups: " + std::to_string(config_.named_groups.size()) + " groups");
-            if (SSL_set1_group_ids(ssl_, config_.named_groups.data(),
-                                    static_cast<size_t>(config_.named_groups.size())) != 1) {
+            std::string group_str;
+            for (uint16_t g : config_.named_groups) {
+                if (!group_str.empty()) group_str += ",";
+                group_str += std::to_string(g);
+            }
+            debugLog("Group IDs: " + group_str);
+
+            int ret = SSL_set1_group_ids(ssl_, config_.named_groups.data(),
+                                    static_cast<size_t>(config_.named_groups.size()));
+            debugLog("SSL_set1_group_ids returned: " + std::to_string(ret));
+            if (ret != 1) {
                 debugLog("Warning: Failed to set group IDs");
+            }
+        }
+
+        // 3. Configure signature algorithms (CRITICAL for JA4 fingerprint)
+        // Use numeric APIs directly for full algorithm support
+        if (!config_.signature_algorithms.empty()) {
+            debugLog("Setting signature algorithms: " + std::to_string(config_.signature_algorithms.size()) + " algorithms");
+
+            std::string sig_str;
+            for (uint16_t s : config_.signature_algorithms) {
+                if (!sig_str.empty()) sig_str += ",";
+                sig_str += std::to_string(s);
+            }
+            debugLog("Signature algorithm IDs: " + sig_str);
+
+            // Use the numeric API to set signature algorithms directly
+            // SSL_set_signing_algorithm_prefs sets the signing preferences
+            // SSL_set_verify_algorithm_prefs sets the verification preferences
+            int ret1 = SSL_set_signing_algorithm_prefs(ssl_,
+                    config_.signature_algorithms.data(),
+                    static_cast<size_t>(config_.signature_algorithms.size()));
+            debugLog("SSL_set_signing_algorithm_prefs returned: " + std::to_string(ret1));
+            if (ret1 != 1) {
+                debugLog("Warning: Failed to set signing algorithm prefs");
+            }
+
+            int ret2 = SSL_set_verify_algorithm_prefs(ssl_,
+                    config_.signature_algorithms.data(),
+                    static_cast<size_t>(config_.signature_algorithms.size()));
+            debugLog("SSL_set_verify_algorithm_prefs returned: " + std::to_string(ret2));
+            if (ret2 != 1) {
+                debugLog("Warning: Failed to set verify algorithm prefs");
             }
         }
 

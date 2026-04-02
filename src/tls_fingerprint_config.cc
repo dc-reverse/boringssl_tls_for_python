@@ -121,16 +121,13 @@ TLSFingerprintConfig BrowserFingerprints::ChromeDesktop() {
         0x0602,  // dsa_sha512
     };
 
-    // Real Chrome named groups (8 groups)
+    // Real Chrome named groups (BoringSSL only supports these)
+    // Note: Real Chrome also includes FFDHE2048/3072 and X448, but BoringSSL doesn't support them
     config.named_groups = {
         0x001D,  // x25519 (29)
         0x0017,  // secp256r1 (23)
         0x0018,  // secp384r1 (24)
         0x0019,  // secp521r1 (25)
-        0x0100,  // ffdhe2048 (256)
-        0x0101,  // ffdhe3072 (257)
-        0x0102,  // ffdhe4096 (258)
-        0x0103,  // ffdhe6144 (259)
     };
 
     // ALPN protocols
@@ -215,17 +212,17 @@ TLSFingerprintConfig BrowserFingerprints::Safari() {
     config.version_min = SSL_PROTOCOL_VERSION_TLS1_2;
     config.version_max = SSL_PROTOCOL_VERSION_TLS1_3;
 
-    // Safari cipher suites
+    // Safari cipher suites - Real Safari: 4866-4867-4865-49195-49199-49196-49200
+    // Has TLS 1.3 CHACHA20 (0x1303=4867), but NO TLS 1.2 CHACHA20 (0xCCA9/0xCCA8)
     config.cipher_suites = {
-        0x1301,  // TLS_AES_128_GCM_SHA256
-        0x1302,  // TLS_AES_256_GCM_SHA384
-        0x1303,  // TLS_CHACHA20_POLY1305_SHA256
-        0xC02B,  // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-        0xC02F,  // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        0xC02C,  // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
-        0xC030,  // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-        0xCCA9,  // TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
-        0xCCA8,  // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+        0x1302,  // TLS_AES_256_GCM_SHA384 (4866) - Safari puts AES256 first
+        0x1303,  // TLS_CHACHA20_POLY1305_SHA256 (4867) - TLS 1.3 CHACHA20 is OK
+        0x1301,  // TLS_AES_128_GCM_SHA256 (4865)
+        0xC02B,  // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (49195)
+        0xC02F,  // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (49199)
+        0xC02C,  // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 (49196)
+        0xC030,  // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 (49200)
+        // NO 0xCCA9/0xCCA8 - Safari doesn't support TLS 1.2 CHACHA20
     };
 
     // Real Safari signature algorithms (16 algorithms)

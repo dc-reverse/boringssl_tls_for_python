@@ -129,13 +129,69 @@ public:
         // 2. Configure named groups
         if (!config_.named_groups.empty()) {
             debugLog("Setting groups: " + std::to_string(config_.named_groups.size()) + " groups");
-            if (SSL_set1_group_ids(ssl_, config_.named_groups.data(),
-                                    static_cast<size_t>(config_.named_groups.size())) != 1) {
-                debugLog("Warning: Failed to set group IDs");
+
+            std::string group_str;
+            for (uint16_t g : config_.named_groups) {
+                if (!group_str.empty()) group_str += ",";
+                group_str += std::to_string(g);
+            }
+            debugLog("Group IDs: " + group_str);
+
+            // Clear any previous errors
+            ERR_clear_error();
+
+            int ret = SSL_set1_group_ids(ssl_, config_.named_groups.data(),
+                                    static_cast<size_t>(config_.named_groups.size()));
+            debugLog("SSL_set1_group_ids returned: " + std::to_string(ret));
+
+            if (ret != 1) {
+                unsigned long err = ERR_get_error();
+                char err_buf[256];
+                ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                debugLog("Error setting group IDs: " + std::string(err_buf));
             }
         }
 
-        // 3. Configure ALPN protocols
+        // 3. Configure signature algorithms (CRITICAL for JA4 fingerprint)
+        if (!config_.signature_algorithms.empty()) {
+            debugLog("Setting signature algorithms: " + std::to_string(config_.signature_algorithms.size()) + " algorithms");
+
+            std::string sig_str;
+            for (uint16_t s : config_.signature_algorithms) {
+                if (!sig_str.empty()) sig_str += ",";
+                sig_str += std::to_string(s);
+            }
+            debugLog("Signature algorithm IDs: " + sig_str);
+
+            // Clear any previous errors
+            ERR_clear_error();
+
+            // Use the numeric API to set signature algorithms directly
+            int ret1 = SSL_set_signing_algorithm_prefs(ssl_,
+                    config_.signature_algorithms.data(),
+                    static_cast<size_t>(config_.signature_algorithms.size()));
+            debugLog("SSL_set_signing_algorithm_prefs returned: " + std::to_string(ret1));
+            if (ret1 != 1) {
+                unsigned long err = ERR_get_error();
+                char err_buf[256];
+                ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                debugLog("Error setting signing prefs: " + std::string(err_buf));
+            }
+
+            ERR_clear_error();
+            int ret2 = SSL_set_verify_algorithm_prefs(ssl_,
+                    config_.signature_algorithms.data(),
+                    static_cast<size_t>(config_.signature_algorithms.size()));
+            debugLog("SSL_set_verify_algorithm_prefs returned: " + std::to_string(ret2));
+            if (ret2 != 1) {
+                unsigned long err = ERR_get_error();
+                char err_buf[256];
+                ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                debugLog("Error setting verify prefs: " + std::string(err_buf));
+            }
+        }
+
+        // 4. Configure ALPN protocols
         if (!config_.alpn_protocols.empty()) {
             std::vector<uint8_t> alpn_data;
             for (const std::string& proto : config_.alpn_protocols) {
