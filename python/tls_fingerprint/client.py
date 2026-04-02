@@ -185,6 +185,15 @@ class TLSHttpClient:
                 "Please rebuild the library with BoringSSL support."
             )
 
+        # Check if hpack is available (required for HTTP/2 header encoding/decoding)
+        try:
+            import hpack  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "hpack is required for HTTP/2 support. "
+                "Please install it: pip install hpack"
+            )
+
     def _log(self, msg: str, *args):
         """Print debug log message."""
         _log(self._debug, msg, *args)

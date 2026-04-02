@@ -14,6 +14,48 @@ __pycache__/
 *.so
 *.dll
 *.dylib
+*.egg
+*.eggs/
+.eggs/
+pip-wheel-metadata/
+*.whl
+wheelhouse/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.la
+*.lo
+*.exp
+*.out
+*.app
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+*.cmake
+!CMakeLists.txt
+_deps/
+CMakeScripts/
+Testing/
+CTestTestfile.cmake
+install_manifest.txt
+
+# BoringSSL build output
+third_party/boringssl/build/
+third_party/boringssl/install/
 
 # IDE
 .idea/
@@ -21,22 +63,28 @@ __pycache__/
 *.swp
 *.swo
 *~
+.project
+.cproject
+.settings/
+*.code-workspace
 
 # OS
 .DS_Store
 Thumbs.db
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
-
-# Wheels
-*.whl
-wheelhouse/
+ehthumbs.db
+Desktop.ini
+._*
 
 # Test coverage
 htmlcov/
 .coverage
 .coverage.*
+*.gcno
+*.gcda
+*.gcov
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
