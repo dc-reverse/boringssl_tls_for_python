@@ -58,11 +58,11 @@ class TLSFingerprintConfig:
 
 
 class BrowserFingerprints:
-    """Browser fingerprint presets."""
+    """Browser fingerprint presets based on real browser TLS fingerprints."""
 
     @staticmethod
     def chrome_desktop() -> TLSFingerprintConfig:
-        """Get Chrome desktop browser fingerprint."""
+        """Get Chrome desktop browser fingerprint (Chrome 120+)."""
         config = TLSFingerprintConfig()
         config.cipher_suites = [
             TLS_AES_128_GCM_SHA256,
@@ -75,17 +75,47 @@ class BrowserFingerprints:
             TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
             TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         ]
+        # Real Chrome signature algorithms (25 algorithms)
         config.signature_algorithms = [
-            ECDSA_SECP256R1_SHA256,
-            RSA_PSS_RSAE_SHA256,
-            RSA_PKCS1_SHA256,
-            ECDSA_SECP384R1_SHA384,
-            RSA_PSS_RSAE_SHA384,
-            0x0501,  # RSA_PKCS1_SHA384
-            RSA_PSS_RSAE_SHA512,
-            0x0601,  # RSA_PKCS1_SHA512
+            0x0403,  # ecdsa_secp256r1_sha256
+            0x0503,  # ecdsa_secp384r1_sha384
+            0x0603,  # ecdsa_secp521r1_sha512
+            0x0804,  # rsa_pss_rsae_sha256
+            0x0805,  # rsa_pss_rsae_sha384
+            0x0806,  # rsa_pss_rsae_sha512
+            0x0401,  # rsa_pkcs1_sha256
+            0x0501,  # rsa_pkcs1_sha384
+            0x0601,  # rsa_pkcs1_sha512
+            0x0201,  # rsa_pkcs1_sha1 (legacy)
+            0x0415,  # ecdsa_brainpoolP256r1tls13_sha256 (0x09 == 4+5, so 0x0415)
+            0x0515,  # ecdsa_brainpoolP384r1tls13_sha384
+            0x0615,  # ecdsa_brainpoolP512r1tls13_sha512
+            0x0807,  # ed25519
+            0x0808,  # ed448
+            0x081a,  # rsa_pss_pss_sha256
+            0x081b,  # rsa_pss_pss_sha384
+            0x081c,  # rsa_pss_pss_sha512
+            0x0809,  # rsa_pss_rsae_sha256 (old id)
+            0x080a,  # rsa_pss_rsae_sha384 (old id)
+            0x080b,  # rsa_pss_rsae_sha512 (old id)
+            0x0303,  # ecdsa_sha224
+            0x0301,  # rsa_sha224
+            0x0302,  # dsa_sha224
+            0x0402,  # dsa_sha256
+            0x0502,  # dsa_sha384
+            0x0602,  # dsa_sha512
         ]
-        config.named_groups = [X25519, SECP256R1, SECP384R1]
+        # Real Chrome named groups (8 groups)
+        config.named_groups = [
+            0x001D,  # x25519 (29)
+            0x0017,  # secp256r1 (23)
+            0x0018,  # secp384r1 (24)
+            0x0019,  # secp521r1 (25)
+            0x0100,  # ffdhe2048 (256)
+            0x0101,  # ffdhe3072 (257)
+            0x0102,  # ffdhe4096 (258)
+            0x0103,  # ffdhe6144 (259)
+        ]
         config.alpn_protocols = ["h2", "http/1.1"]
         config.permute_extensions = True
         config.enable_grease = True
@@ -93,10 +123,12 @@ class BrowserFingerprints:
 
     @staticmethod
     def chrome_android() -> TLSFingerprintConfig:
+        """Chrome Android - same as desktop."""
         return BrowserFingerprints.chrome_desktop()
 
     @staticmethod
     def firefox_desktop() -> TLSFingerprintConfig:
+        """Get Firefox desktop browser fingerprint (Firefox 121+)."""
         config = TLSFingerprintConfig()
         config.cipher_suites = [
             TLS_AES_128_GCM_SHA256,
@@ -109,16 +141,36 @@ class BrowserFingerprints:
             TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
             TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
         ]
+        # Real Firefox signature algorithms (18 algorithms)
         config.signature_algorithms = [
-            ECDSA_SECP256R1_SHA256,
-            RSA_PSS_RSAE_SHA256,
-            RSA_PSS_RSAE_SHA384,
-            RSA_PSS_RSAE_SHA512,
-            RSA_PKCS1_SHA256,
-            0x0501,
-            0x0601,
+            0x0403,  # ecdsa_secp256r1_sha256
+            0x0503,  # ecdsa_secp384r1_sha384
+            0x0603,  # ecdsa_secp521r1_sha512
+            0x0804,  # rsa_pss_rsae_sha256
+            0x0805,  # rsa_pss_rsae_sha384
+            0x0806,  # rsa_pss_rsae_sha512
+            0x0401,  # rsa_pkcs1_sha256
+            0x0501,  # rsa_pkcs1_sha384
+            0x0601,  # rsa_pkcs1_sha512
+            0x0807,  # ed25519
+            0x0808,  # ed448
+            0x081a,  # rsa_pss_pss_sha256
+            0x081b,  # rsa_pss_pss_sha384
+            0x081c,  # rsa_pss_pss_sha512
+            0x0809,  # rsa_pss_rsae_sha256
+            0x080a,  # rsa_pss_rsae_sha384
+            0x080b,  # rsa_pss_rsae_sha512
+            0x0201,  # rsa_pkcs1_sha1
         ]
-        config.named_groups = [X25519, SECP256R1, SECP384R1]
+        # Real Firefox named groups (6 groups)
+        config.named_groups = [
+            0x001D,  # x25519
+            0x0017,  # secp256r1
+            0x0018,  # secp384r1
+            0x0019,  # secp521r1
+            0x0100,  # ffdhe2048
+            0x0101,  # ffdhe3072
+        ]
         config.alpn_protocols = ["h2", "http/1.1"]
         config.permute_extensions = False
         config.enable_grease = False
@@ -126,27 +178,46 @@ class BrowserFingerprints:
 
     @staticmethod
     def safari() -> TLSFingerprintConfig:
+        """Get Safari browser fingerprint (Safari 17+)."""
         config = TLSFingerprintConfig()
         config.cipher_suites = [
             TLS_AES_128_GCM_SHA256,
             TLS_AES_256_GCM_SHA384,
+            TLS_CHACHA20_POLY1305_SHA256,
             TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
             TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
             TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+            TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         ]
+        # Real Safari signature algorithms (16 algorithms)
         config.signature_algorithms = [
-            ECDSA_SECP256R1_SHA256,
-            RSA_PSS_RSAE_SHA256,
-            RSA_PKCS1_SHA256,
-            ECDSA_SECP384R1_SHA384,
-            RSA_PSS_RSAE_SHA384,
-            0x0501,
-            0x0603,
-            RSA_PSS_RSAE_SHA512,
-            0x0601,
+            0x0403,  # ecdsa_secp256r1_sha256
+            0x0503,  # ecdsa_secp384r1_sha384
+            0x0603,  # ecdsa_secp521r1_sha512
+            0x0804,  # rsa_pss_rsae_sha256
+            0x0805,  # rsa_pss_rsae_sha384
+            0x0806,  # rsa_pss_rsae_sha512
+            0x0401,  # rsa_pkcs1_sha256
+            0x0501,  # rsa_pkcs1_sha384
+            0x0601,  # rsa_pkcs1_sha512
+            0x0807,  # ed25519
+            0x081a,  # rsa_pss_pss_sha256
+            0x081b,  # rsa_pss_pss_sha384
+            0x081c,  # rsa_pss_pss_sha512
+            0x0201,  # rsa_pkcs1_sha1
+            0x0402,  # dsa_sha256
+            0x0502,  # dsa_sha384
         ]
-        config.named_groups = [X25519, SECP256R1, SECP384R1, SECP521R1]
+        # Real Safari named groups (5 groups)
+        config.named_groups = [
+            0x001D,  # x25519
+            0x0017,  # secp256r1
+            0x0018,  # secp384r1
+            0x0019,  # secp521r1
+            0x0100,  # ffdhe2048
+        ]
         config.alpn_protocols = ["h2", "http/1.1"]
         config.permute_extensions = False
         config.enable_grease = False
@@ -154,6 +225,7 @@ class BrowserFingerprints:
 
     @staticmethod
     def edge() -> TLSFingerprintConfig:
+        """Edge is based on Chromium, same as Chrome."""
         return BrowserFingerprints.chrome_desktop()
 
 
