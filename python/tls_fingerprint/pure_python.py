@@ -211,12 +211,15 @@ EXT_STATUS_REQUEST = 0x0005
 EXT_SUPPORTED_GROUPS = 0x000A
 EXT_EC_POINT_FORMATS = 0x000B
 EXT_SIGNATURE_ALGORITHMS = 0x000D
-EXT_SCT = 0x0012
 EXT_ALPN = 0x0010
+EXT_SCT = 0x0012
 EXT_EXTENDED_MASTER_SECRET = 0x0017
-EXT_KEY_SHARE = 0x0033
-EXT_PSK_KEY_EXCHANGE_MODES = 0x002D
+EXT_COMPRESS_CERTIFICATE = 0x001B
+EXT_SESSION_TICKET = 0x0023
 EXT_SUPPORTED_VERSIONS = 0x002B
+EXT_PSK_KEY_EXCHANGE_MODES = 0x002D
+EXT_KEY_SHARE = 0x0033
+EXT_APPLICATION_SETTINGS = 0x4469
 EXT_RENEGOTIATION_INFO = 0xFF01
 
 
@@ -304,6 +307,10 @@ class TLSFingerprintGenerator:
             self._write_u16(groups, g)
         ext_list.append((EXT_SUPPORTED_GROUPS, bytes(groups)))
 
+        # EC Point Formats (Chrome sends uncompressed only)
+        ec_pf = bytearray([0x01, 0x00])  # length=1, uncompressed=0
+        ext_list.append((EXT_EC_POINT_FORMATS, bytes(ec_pf)))
+
         # Signature Algorithms
         sig_algs = bytearray()
         self._write_u16(sig_algs, len(self._config.signature_algorithms) * 2)
@@ -325,41 +332,70 @@ class TLSFingerprintGenerator:
         ocsp = bytearray([0x01, 0x00, 0x00, 0x00, 0x00])
         ext_list.append((EXT_STATUS_REQUEST, bytes(ocsp)))
 
-        # Supported Versions
-        versions = bytearray([0x02, 0x03, 0x03])  # TLS 1.2
-        versions.extend([0x03, 0x04])  # TLS 1.3
-        versions[0] = (len(versions) - 1) // 2 * 2
-        ext_list.append((EXT_SUPPORTED_VERSIONS, bytes(versions[:versions[0] + 1])))
+        # Signed Certificate Timestamp
+        ext_list.append((EXT_SCT, b""))
 
-        # Key Share
+        # Session Ticket (empty)
+        ext_list.append((EXT_SESSION_TICKET, b""))
+
+        # Compress Certificate (Brotli = algorithm 2)
+        compress = bytearray([0x02, 0x00, 0x02])  # length=2, brotli=0x0002
+        ext_list.append((EXT_COMPRESS_CERTIFICATE, bytes(compress)))
+
+        # Application Settings (ALPS) for HTTP/2
+        alps = bytearray()
+        alps_proto = b"h2"
+        alps_list = bytearray()
+        alps_list.append(len(alps_proto))
+        alps_list.extend(alps_proto)
+        self._write_u16(alps, len(alps_list))
+        alps.extend(alps_list)
+        ext_list.append((EXT_APPLICATION_SETTINGS, bytes(alps)))
+
+        # Supported Versions - TLS 1.3 first (preferred), then TLS 1.2
+        versions = bytearray([0x04])  # 4 bytes = 2 versions
+        versions.extend([0x03, 0x04])  # TLS 1.3
+        versions.extend([0x03, 0x03])  # TLS 1.2
+        ext_list.append((EXT_SUPPORTED_VERSIONS, bytes(versions)))
+
+        # Key Share - Chrome only sends shares for x25519_mlkem768 + x25519
         key_share = bytearray()
+        key_entries = bytearray()
         for group in self._config.named_groups:
+            # Skip NIST curves in key share (Chrome doesn't send these)
+            if group in (SECP256R1, SECP384R1, SECP521R1):
+                continue
+
             share_entry = bytearray()
             self._write_u16(share_entry, group)
-            # Placeholder key share (32 bytes for x25519)
-            key_size = 32
-            if group == SECP256R1:
-                key_size = 65
-            elif group == SECP384R1:
-                key_size = 97
+
+            key_size = 32  # x25519
+            if group == 0x11EC:  # x25519_mlkem768
+                key_size = 1120
+
             self._write_u16(share_entry, key_size)
             share_entry.extend(self._rng.randbytes(key_size))
-            self._write_u16(key_share, len(share_entry))
-            key_share.extend(share_entry)
+            key_entries.extend(share_entry)
+
+        self._write_u16(key_share, len(key_entries))
+        key_share.extend(key_entries)
         ext_list.append((EXT_KEY_SHARE, bytes(key_share)))
 
-        # PSK Key Exchange Modes
-        psk_modes = bytearray([0x02, 0x01, 0x00])
+        # PSK Key Exchange Modes - Chrome only sends psk_dhe_ke (1)
+        psk_modes = bytearray([0x01, 0x01])  # length=1, psk_dhe_ke=1
         ext_list.append((EXT_PSK_KEY_EXCHANGE_MODES, bytes(psk_modes)))
 
-        # GREASE extension
+        # GREASE extensions (Chrome adds 2 GREASE extensions)
         if self._config.enable_grease:
-            grease = self._rng.choice(_GREASE_VALUES)
-            grease_data = bytearray()
-            self._write_u16(grease_data, grease)
-            ext_list.append((grease, bytes(grease_data)))
+            grease1 = self._rng.choice(_GREASE_VALUES)
+            ext_list.insert(0, (grease1, b"\x00"))
 
-        # Permute extensions
+            grease2 = self._rng.choice(_GREASE_VALUES)
+            while grease2 == grease1:
+                grease2 = self._rng.choice(_GREASE_VALUES)
+            ext_list.append((grease2, b"\x00"))
+
+        # Permute extensions (Chrome randomizes since v110)
         if self._config.permute_extensions:
             self._rng.shuffle(ext_list)
 
@@ -430,6 +466,7 @@ _SIG_ALG_NAMES = {
 }
 
 _GROUP_NAMES = {
+    0x11EC: "x25519_mlkem768",
     0x001D: "x25519",
     0x0017: "secp256r1",
     0x0018: "secp384r1",

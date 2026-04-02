@@ -24,14 +24,14 @@ enum TLSExtension {
     EXT_SUPPORTED_GROUPS = 0x000A,
     EXT_EC_POINT_FORMATS = 0x000B,
     EXT_SIGNATURE_ALGORITHMS = 0x000D,
-    EXT_SCT = 0x0012,
     EXT_ALPN = 0x0010,
+    EXT_SCT = 0x0012,
     EXT_EXTENDED_MASTER_SECRET = 0x0017,
-    EXT_SIGNED_CERT_TIMESTAMP = 0x0012,
-    EXT_KEY_SHARE = 0x0033,
-    EXT_PSK_KEY_EXCHANGE_MODES = 0x002D,
-    EXT_SUPPORTED_VERSIONS = 0x002B,
     EXT_COMPRESS_CERTIFICATE = 0x001B,
+    EXT_SESSION_TICKET = 0x0023,
+    EXT_SUPPORTED_VERSIONS = 0x002B,
+    EXT_PSK_KEY_EXCHANGE_MODES = 0x002D,
+    EXT_KEY_SHARE = 0x0033,
     EXT_APPLICATION_SETTINGS = 0x4469,
     EXT_ECH = 0xFE0D,
     EXT_RENEGOTIATION_INFO = 0xFF01,
@@ -189,6 +189,14 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
         ext_list.emplace_back(EXT_SUPPORTED_GROUPS, groups);
     }
 
+    // EC Point Formats (Chrome sends this)
+    {
+        std::vector<uint8_t> ec_pf;
+        ec_pf.push_back(0x01);  // Length: 1 format
+        ec_pf.push_back(0x00);  // uncompressed
+        ext_list.emplace_back(EXT_EC_POINT_FORMATS, ec_pf);
+    }
+
     // Signature Algorithms
     {
         std::vector<uint8_t> sig_algs;
@@ -228,30 +236,61 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
         ext_list.emplace_back(EXT_SCT, std::vector<uint8_t>{});
     }
 
+    // Session Ticket (Chrome sends empty session ticket)
+    {
+        ext_list.emplace_back(EXT_SESSION_TICKET, std::vector<uint8_t>{});
+    }
+
+    // Compress Certificate (Chrome advertises Brotli = algorithm 2)
+    {
+        std::vector<uint8_t> compress;
+        compress.push_back(0x02);  // algorithms list length (2 bytes for 1 algorithm)
+        compress.push_back(0x00);
+        compress.push_back(0x02);  // Brotli = 0x0002
+        ext_list.emplace_back(EXT_COMPRESS_CERTIFICATE, compress);
+    }
+
+    // Application Settings (ALPS) - Chrome uses this for HTTP/2
+    {
+        std::vector<uint8_t> alps;
+        // Protocol list (same format as ALPN)
+        std::vector<uint8_t> alps_protocols;
+        std::string h2_proto = "h2";
+        alps_protocols.push_back(static_cast<uint8_t>(h2_proto.size()));
+        alps_protocols.insert(alps_protocols.end(), h2_proto.begin(), h2_proto.end());
+        WriteU16BE(alps, static_cast<uint16_t>(alps_protocols.size()));
+        alps.insert(alps.end(), alps_protocols.begin(), alps_protocols.end());
+        ext_list.emplace_back(EXT_APPLICATION_SETTINGS, alps);
+    }
+
     // Supported Versions (for TLS 1.3)
     {
         std::vector<uint8_t> versions;
-        versions.push_back(0x02);  // Supported versions length
+        versions.push_back(0x04);  // Supported versions length: 4 bytes (2 versions)
+        versions.push_back(0x03);  // TLS 1.3 first (preferred)
+        versions.push_back(0x04);
         versions.push_back(0x03);  // TLS 1.2
         versions.push_back(0x03);
-        versions.push_back(0x03);  // TLS 1.3
-        versions.push_back(0x04);
         ext_list.emplace_back(EXT_SUPPORTED_VERSIONS, versions);
     }
 
-    // Key Share
+    // Key Share - Chrome only sends shares for X25519MLKEM768 and X25519
     {
         std::vector<uint8_t> key_share;
-        // For each named group, generate a placeholder key share
+        std::vector<uint8_t> key_share_entries;
+
         for (uint16_t group : config_.named_groups) {
+            // Chrome only sends key shares for the first 2 groups
+            // (x25519_mlkem768 + x25519), not for secp256r1/384r1/521r1
+            if (group == 0x0017 || group == 0x0018 || group == 0x0019) {
+                continue;  // Skip NIST curves in key share
+            }
+
             std::vector<uint8_t> share_entry;
             WriteU16BE(share_entry, group);
 
-            // Generate placeholder key share (32 bytes for x25519)
             int key_size = 32;  // Default for x25519
-            if (group == 0x0017) key_size = 65;  // secp256r1
-            else if (group == 0x0018) key_size = 97;  // secp384r1
-            else if (group == 0x0019) key_size = 133;  // secp521r1
+            if (group == 0x11EC) key_size = 1120;  // x25519_mlkem768: 1120 bytes
 
             std::uniform_int_distribution<uint8_t> dist(0, 255);
             std::vector<uint8_t> key_data(key_size);
@@ -262,33 +301,41 @@ std::vector<uint8_t> TLSFingerprintGenerator::BuildExtensions(const std::string&
             WriteU16BE(share_entry, static_cast<uint16_t>(key_size));
             share_entry.insert(share_entry.end(), key_data.begin(), key_data.end());
 
-            WriteU16BE(key_share, static_cast<uint16_t>(share_entry.size()));
-            key_share.insert(key_share.end(), share_entry.begin(), share_entry.end());
+            key_share_entries.insert(key_share_entries.end(), share_entry.begin(), share_entry.end());
         }
+
+        WriteU16BE(key_share, static_cast<uint16_t>(key_share_entries.size()));
+        key_share.insert(key_share.end(), key_share_entries.begin(), key_share_entries.end());
         ext_list.emplace_back(EXT_KEY_SHARE, key_share);
     }
 
     // PSK Key Exchange Modes (for TLS 1.3)
+    // Chrome sends only psk_dhe_ke (1)
     {
         std::vector<uint8_t> psk_modes;
-        psk_modes.push_back(0x02);  // Length
-        psk_modes.push_back(0x01);  // PSK with (EC)DHE
-        psk_modes.push_back(0x00);  // PSK only
+        psk_modes.push_back(0x01);  // Length: 1 mode
+        psk_modes.push_back(0x01);  // PSK with (EC)DHE only
         ext_list.emplace_back(EXT_PSK_KEY_EXCHANGE_MODES, psk_modes);
     }
 
-    // Add GREASE extension if enabled
+    // Add GREASE extensions if enabled
     if (config_.enable_grease) {
         std::uniform_int_distribution<size_t> grease_dist(0, 14);
-        uint16_t grease_val = kGreaseValues[grease_dist(GetRandomGenerator())];
 
-        // GREASE extension with random value
-        std::vector<uint8_t> grease_data;
-        WriteU16BE(grease_data, grease_val);
-        ext_list.emplace_back(grease_val, grease_data);
+        // GREASE extension at the beginning
+        uint16_t grease_val1 = kGreaseValues[grease_dist(GetRandomGenerator())];
+        ext_list.insert(ext_list.begin(),
+            std::make_pair(grease_val1, std::vector<uint8_t>{0x00}));
+
+        // GREASE extension near the end
+        uint16_t grease_val2 = kGreaseValues[grease_dist(GetRandomGenerator())];
+        while (grease_val2 == grease_val1) {
+            grease_val2 = kGreaseValues[grease_dist(GetRandomGenerator())];
+        }
+        ext_list.emplace_back(grease_val2, std::vector<uint8_t>{0x00});
     }
 
-    // Permute extensions if enabled
+    // Permute extensions if enabled (Chrome randomizes since v110)
     if (config_.permute_extensions) {
         std::shuffle(ext_list.begin(), ext_list.end(), GetRandomGenerator());
     }

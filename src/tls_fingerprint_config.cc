@@ -64,6 +64,7 @@ const std::unordered_map<uint16_t, const char*> kNamedGroupNames = {
     {0x0102, "ffdhe4096"},
     {0x0103, "ffdhe6144"},
     {0x0104, "ffdhe8192"},
+    {0x11EC, "x25519_mlkem768"},
 };
 
 }  // namespace
@@ -90,7 +91,8 @@ TLSFingerprintConfig BrowserFingerprints::ChromeDesktop() {
         0xCCA8,  // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
     };
 
-    // Real Chrome signature algorithms (25+ algorithms)
+    // Chrome 131+ signature algorithms (exact match, 13 algorithms)
+    // Only algorithms actually supported by BoringSSL/Chrome
     config.signature_algorithms = {
         0x0403,  // ecdsa_secp256r1_sha256
         0x0503,  // ecdsa_secp384r1_sha384
@@ -102,28 +104,14 @@ TLSFingerprintConfig BrowserFingerprints::ChromeDesktop() {
         0x0501,  // rsa_pkcs1_sha384
         0x0601,  // rsa_pkcs1_sha512
         0x0201,  // rsa_pkcs1_sha1 (legacy)
-        0x0415,  // ecdsa_brainpoolP256r1tls13_sha256
-        0x0515,  // ecdsa_brainpoolP384r1tls13_sha384
-        0x0615,  // ecdsa_brainpoolP512r1tls13_sha512
+        0x0203,  // ecdsa_sha1 (legacy)
         0x0807,  // ed25519
-        0x0808,  // ed448
-        0x081a,  // rsa_pss_pss_sha256
-        0x081b,  // rsa_pss_pss_sha384
-        0x081c,  // rsa_pss_pss_sha512
-        0x0809,  // rsa_pss_rsae_sha256 (old)
-        0x080a,  // rsa_pss_rsae_sha384 (old)
-        0x080b,  // rsa_pss_rsae_sha512 (old)
-        0x0303,  // ecdsa_sha224
-        0x0301,  // rsa_sha224
-        0x0302,  // dsa_sha224
-        0x0402,  // dsa_sha256
-        0x0502,  // dsa_sha384
-        0x0602,  // dsa_sha512
+        0x0420,  // rsa_pkcs1_sha256_legacy
     };
 
-    // Real Chrome named groups (BoringSSL only supports these)
-    // Note: Real Chrome also includes FFDHE2048/3072 and X448, but BoringSSL doesn't support them
+    // Chrome 131+ named groups (includes post-quantum hybrid)
     config.named_groups = {
+        0x11EC,  // x25519_mlkem768 (4588) - post-quantum hybrid
         0x001D,  // x25519 (29)
         0x0017,  // secp256r1 (23)
         0x0018,  // secp384r1 (24)
@@ -165,7 +153,7 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
         0xC030,  // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
     };
 
-    // Real Firefox signature algorithms (18 algorithms)
+    // Firefox signature algorithms (BoringSSL-supported only, 11 algorithms)
     config.signature_algorithms = {
         0x0403,  // ecdsa_secp256r1_sha256
         0x0503,  // ecdsa_secp384r1_sha384
@@ -177,13 +165,6 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
         0x0501,  // rsa_pkcs1_sha384
         0x0601,  // rsa_pkcs1_sha512
         0x0807,  // ed25519
-        0x0808,  // ed448
-        0x081a,  // rsa_pss_pss_sha256
-        0x081b,  // rsa_pss_pss_sha384
-        0x081c,  // rsa_pss_pss_sha512
-        0x0809,  // rsa_pss_rsae_sha256
-        0x080a,  // rsa_pss_rsae_sha384
-        0x080b,  // rsa_pss_rsae_sha512
         0x0201,  // rsa_pkcs1_sha1
     };
 
@@ -225,7 +206,7 @@ TLSFingerprintConfig BrowserFingerprints::Safari() {
         // NO 0xCCA9/0xCCA8 - Safari doesn't support TLS 1.2 CHACHA20
     };
 
-    // Real Safari signature algorithms (16 algorithms)
+    // Safari signature algorithms (BoringSSL-supported only, 11 algorithms)
     config.signature_algorithms = {
         0x0403,  // ecdsa_secp256r1_sha256
         0x0503,  // ecdsa_secp384r1_sha384
@@ -237,12 +218,7 @@ TLSFingerprintConfig BrowserFingerprints::Safari() {
         0x0501,  // rsa_pkcs1_sha384
         0x0601,  // rsa_pkcs1_sha512
         0x0807,  // ed25519
-        0x081a,  // rsa_pss_pss_sha256
-        0x081b,  // rsa_pss_pss_sha384
-        0x081c,  // rsa_pss_pss_sha512
         0x0201,  // rsa_pkcs1_sha1
-        0x0402,  // dsa_sha256
-        0x0502,  // dsa_sha384
     };
 
     // Real Safari named groups (5 groups)

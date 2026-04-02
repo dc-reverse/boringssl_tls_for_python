@@ -30,6 +30,11 @@ from .pure_python import (
     BrowserFingerprints,
 )
 from .session import TLSSession
+from .http2_fingerprint import (
+    HTTP2BrowserFingerprints,
+    HTTP2FrameBuilder,
+    HTTP2FingerprintConfig,
+)
 
 
 def _log(debug: bool, msg: str, *args):
@@ -212,13 +217,13 @@ class TLSHttpClient:
         """Get default HTTP headers for browser."""
         browser = self._session.browser_type
 
-        # User-Agent based on browser
+        # User-Agent based on browser (Chrome 131+)
         user_agents = {
-            "chrome": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "chrome_android": "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "firefox": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-            "safari": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-            "edge": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            "chrome": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "chrome_android": "Mozilla/5.0 (Linux; Android 14; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+            "firefox": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "safari": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+            "edge": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
         }
 
         ua = user_agents.get(browser, user_agents["chrome"])
@@ -414,12 +419,10 @@ class TLSHttpClient:
         sock.set_debug(self._debug)
 
         # The session config is already a native TLSFingerprintConfig
-        # Just set it directly
+        # Keep the original ALPN (h2, http/1.1) to match real Chrome TLS fingerprint.
+        # Even though we speak HTTP/1.1, the ALPN in ClientHello must advertise h2
+        # to match the browser fingerprint. The server will negotiate based on ALPN.
         config = self._session.config
-
-        # Override ALPN to use http/1.1 only (we don't support HTTP/2 yet)
-        # This prevents h2 negotiation which would cause the server to expect HTTP/2
-        config.alpn_protocols = ["http/1.1"]
 
         sock.set_config(config)
         return sock
@@ -467,6 +470,360 @@ class TLSHttpClient:
 
             self._log(f"Direct connection established in {time.time()-start:.3f}s")
             return sock
+
+    def _get_negotiated_protocol(self, sock) -> str:
+        """Get the ALPN negotiated protocol from the connection."""
+        try:
+            info = sock.get_connection_info()
+            proto = info.negotiated_protocol
+            if proto:
+                self._log(f"Negotiated ALPN protocol: {proto}")
+                return proto
+        except Exception:
+            pass
+        return "http/1.1"
+
+    def _send_h2_request(self, sock, method: str, path: str, host: str,
+                          headers: Optional[Dict[str, str]] = None,
+                          body: Optional[bytes] = None) -> HttpResponse:
+        """Send HTTP/2 request with proper fingerprinting frames."""
+        try:
+            import hpack
+            encoder = hpack.Encoder()
+            use_hpack = True
+        except ImportError:
+            use_hpack = False
+
+        browser_type = self._session.browser_type
+        h2_config = HTTP2BrowserFingerprints.get_fingerprint(browser_type)
+        frame_builder = HTTP2FrameBuilder(h2_config)
+
+        # 1. Send HTTP/2 connection preface
+        preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+        sock.send(preface)
+        self._log("Sent HTTP/2 connection preface")
+
+        # 2. Send SETTINGS frame
+        settings_frame = frame_builder.build_settings_frame()
+        sock.send(settings_frame)
+        self._log("Sent HTTP/2 SETTINGS frame")
+
+        # 3. Send WINDOW_UPDATE frame for connection (stream 0)
+        window_update = frame_builder.build_window_update_frame(stream_id=0)
+        sock.send(window_update)
+        self._log("Sent HTTP/2 WINDOW_UPDATE frame")
+
+        # 4. Wait briefly for server's SETTINGS, then ACK
+        import time as _time
+        _time.sleep(0.05)
+        try:
+            server_settings = sock.recv(4096)
+            if server_settings:
+                self._log(f"Received server SETTINGS ({len(server_settings)} bytes)")
+                # Send SETTINGS ACK
+                sock.send(b'\x00\x00\x00\x04\x01\x00\x00\x00\x00')
+                self._log("Sent SETTINGS ACK")
+        except Exception:
+            pass
+
+        # 5. Build headers for the request
+        req_headers = self._get_default_headers(host, True)
+        if headers:
+            req_headers.update(headers)
+
+        # Build pseudo-headers + regular headers
+        if use_hpack:
+            headers_list = [
+                (':method', method),
+                (':authority', host),
+                (':scheme', 'https'),
+                (':path', path),
+            ]
+            for k, v in req_headers.items():
+                if k.lower() in ("host", "connection", "transfer-encoding"):
+                    continue
+                headers_list.append((k.lower(), v))
+
+            encoded = encoder.encode(headers_list)
+        else:
+            all_headers = {
+                ':method': method,
+                ':authority': host,
+                ':scheme': 'https',
+                ':path': path,
+            }
+            for k, v in req_headers.items():
+                if k.lower() in ("host", "connection", "transfer-encoding"):
+                    continue
+                all_headers[k.lower()] = v
+            encoded = frame_builder._build_header_block(all_headers)
+
+        # 6. Send HEADERS frame on stream 1
+        end_stream = body is None
+        flags = 0x04  # END_HEADERS
+        if end_stream:
+            flags |= 0x01  # END_STREAM
+        hdr_frame = len(encoded).to_bytes(3, 'big') + bytes([0x01, flags]) + (1).to_bytes(4, 'big') + encoded
+        sock.send(hdr_frame)
+        self._log("Sent HTTP/2 HEADERS frame")
+
+        # 7. Send DATA frame if body exists
+        if body:
+            data_frame = self._build_h2_data_frame(body, stream_id=1, end_stream=True)
+            sock.send(data_frame)
+
+        # 8. Read response frames
+        return self._read_h2_response(sock)
+
+    def _build_h2_data_frame(self, data: bytes, stream_id: int, end_stream: bool) -> bytes:
+        """Build HTTP/2 DATA frame."""
+        flags = 0x01 if end_stream else 0x00  # END_STREAM
+        header = len(data).to_bytes(3, 'big')  # length
+        header += b'\x00'  # type = DATA
+        header += bytes([flags])
+        header += stream_id.to_bytes(4, 'big')
+        return header + data
+
+    def _read_h2_response(self, sock) -> HttpResponse:
+        """Read and parse HTTP/2 response frames."""
+        try:
+            import hpack
+            decoder = hpack.Decoder()
+        except ImportError:
+            decoder = None
+
+        response_headers = {}
+        response_body = b""
+        status_code = 200
+        stream_ended = False
+        goaway_received = False
+
+        buf = b""
+        max_reads = 200
+        import time as _time
+
+        for _ in range(max_reads):
+            if stream_ended:
+                break
+
+            # Small delay between reads
+            _time.sleep(0.05)
+
+            # Read data
+            try:
+                chunk = sock.recv(16384)
+            except Exception:
+                break
+            if not chunk:
+                break
+            buf += chunk
+
+            # Parse frames from buffer
+            while len(buf) >= 9:
+                frame_len = int.from_bytes(buf[0:3], 'big')
+                frame_type = buf[3]
+                frame_flags = buf[4]
+                frame_stream_id = int.from_bytes(buf[5:9], 'big') & 0x7FFFFFFF
+
+                total_frame_len = 9 + frame_len
+                if len(buf) < total_frame_len:
+                    break  # Need more data
+
+                frame_payload = buf[9:total_frame_len]
+                buf = buf[total_frame_len:]
+
+                if frame_type == 0x04:  # SETTINGS
+                    if not (frame_flags & 0x01):  # Not ACK
+                        ack = b'\x00\x00\x00\x04\x01\x00\x00\x00\x00'
+                        sock.send(ack)
+                        self._log("Sent SETTINGS ACK")
+
+                elif frame_type == 0x01 and frame_stream_id == 1:  # HEADERS on our stream
+                    if decoder:
+                        try:
+                            decoded = decoder.decode(frame_payload)
+                            for name, value in decoded:
+                                response_headers[name] = value
+                        except Exception as e:
+                            self._log(f"HPACK decode error: {e}")
+                    else:
+                        self._parse_h2_headers(frame_payload, response_headers)
+
+                    if ":status" in response_headers:
+                        status_code = int(response_headers[":status"])
+                        del response_headers[":status"]
+
+                    if frame_flags & 0x01:  # END_STREAM
+                        stream_ended = True
+
+                elif frame_type == 0x00 and frame_stream_id == 1:  # DATA on our stream
+                    response_body += frame_payload
+                    if frame_flags & 0x01:  # END_STREAM
+                        stream_ended = True
+
+                    # Send WINDOW_UPDATE for received data
+                    if frame_len > 0:
+                        wu_payload = frame_len.to_bytes(4, 'big')
+                        wu_frame = (4).to_bytes(3, 'big') + b'\x08\x00' + (0).to_bytes(4, 'big') + wu_payload
+                        sock.send(wu_frame)
+
+                elif frame_type == 0x07:  # GOAWAY
+                    goaway_received = True
+                    # Don't stop immediately - we may still receive data for stream 1
+                    self._log("Received GOAWAY, continuing to read stream 1")
+
+                elif frame_type == 0x06:  # PING
+                    if not (frame_flags & 0x01):
+                        ping_ack = (8).to_bytes(3, 'big') + b'\x06\x01' + (0).to_bytes(4, 'big') + frame_payload
+                        sock.send(ping_ack)
+
+                elif frame_type == 0x08:  # WINDOW_UPDATE
+                    pass
+
+        # Handle decompression
+        content_encoding = response_headers.get("content-encoding", "").lower()
+        if content_encoding == "gzip":
+            response_body = self._decompress_gzip(response_body)
+        elif content_encoding == "br":
+            try:
+                import brotli
+                response_body = brotli.decompress(response_body)
+            except ImportError:
+                self._log("Warning: brotli not installed, cannot decompress br content")
+            except Exception as e:
+                self._log(f"Warning: brotli decompress failed: {e}")
+
+        return HttpResponse(
+            status_code=status_code,
+            headers=response_headers,
+            body=response_body,
+            http_version="HTTP/2",
+        )
+
+    def _parse_h2_headers(self, data: bytes, headers: Dict[str, str]) -> None:
+        """Parse simplified HPACK encoded headers from HTTP/2 HEADERS frame."""
+        pos = 0
+        while pos < len(data):
+            byte = data[pos]
+
+            if byte & 0x80:  # Indexed Header Field
+                # Static table lookup (simplified)
+                index = byte & 0x7F
+                if index == 0:
+                    break
+                # Common static table entries
+                static_headers = {
+                    2: (":method", "GET"),
+                    3: (":method", "POST"),
+                    4: (":path", "/"),
+                    5: (":path", "/index.html"),
+                    6: (":scheme", "http"),
+                    7: (":scheme", "https"),
+                    8: (":status", "200"),
+                    9: (":status", "204"),
+                    10: (":status", "206"),
+                    11: (":status", "304"),
+                    12: (":status", "400"),
+                    13: (":status", "404"),
+                    14: (":status", "500"),
+                }
+                if index in static_headers:
+                    name, value = static_headers[index]
+                    headers[name] = value
+                pos += 1
+
+            elif byte & 0x40:  # Literal Header Field with Incremental Indexing
+                name_index = byte & 0x3F
+                pos += 1
+                if name_index > 0:
+                    # Name from static table
+                    static_names = {
+                        1: ":authority", 8: ":status", 15: "accept-charset",
+                        16: "accept-encoding", 17: "accept-language", 19: "accept-ranges",
+                        22: "allow", 23: "authorization", 24: "cache-control",
+                        25: "content-disposition", 26: "content-encoding",
+                        28: "content-length", 29: "content-location",
+                        31: "content-type", 32: "cookie", 33: "date",
+                        35: "expires", 37: "host", 40: "last-modified",
+                        44: "location", 46: "proxy-authenticate",
+                        50: "retry-after", 51: "server", 54: "set-cookie",
+                        55: "strict-transport-security", 57: "transfer-encoding",
+                        58: "user-agent", 60: "via", 61: "www-authenticate",
+                    }
+                    name = static_names.get(name_index, f"header-{name_index}")
+                    # Read value
+                    if pos < len(data):
+                        value_len = data[pos] & 0x7F
+                        huffman = bool(data[pos] & 0x80)
+                        pos += 1
+                        if pos + value_len <= len(data):
+                            value = data[pos:pos+value_len].decode('utf-8', errors='replace')
+                            headers[name] = value
+                            pos += value_len
+                        else:
+                            break
+                    else:
+                        break
+                else:
+                    # Literal name
+                    if pos >= len(data):
+                        break
+                    name_len = data[pos] & 0x7F
+                    pos += 1
+                    if pos + name_len > len(data):
+                        break
+                    name = data[pos:pos+name_len].decode('utf-8', errors='replace')
+                    pos += name_len
+                    if pos >= len(data):
+                        break
+                    value_len = data[pos] & 0x7F
+                    pos += 1
+                    if pos + value_len > len(data):
+                        break
+                    value = data[pos:pos+value_len].decode('utf-8', errors='replace')
+                    headers[name] = value
+                    pos += value_len
+
+            elif byte & 0x20:  # Dynamic Table Size Update
+                pos += 1  # Skip
+
+            else:  # Literal Header Field without Indexing / Never Indexed
+                name_index = byte & 0x0F
+                pos += 1
+                if name_index > 0:
+                    static_names = {
+                        1: ":authority", 8: ":status",
+                        26: "content-encoding", 28: "content-length",
+                        31: "content-type",
+                    }
+                    name = static_names.get(name_index, f"header-{name_index}")
+                    if pos >= len(data):
+                        break
+                    value_len = data[pos] & 0x7F
+                    pos += 1
+                    if pos + value_len > len(data):
+                        break
+                    value = data[pos:pos+value_len].decode('utf-8', errors='replace')
+                    headers[name] = value
+                    pos += value_len
+                else:
+                    if pos >= len(data):
+                        break
+                    name_len = data[pos] & 0x7F
+                    pos += 1
+                    if pos + name_len > len(data):
+                        break
+                    name = data[pos:pos+name_len].decode('utf-8', errors='replace')
+                    pos += name_len
+                    if pos >= len(data):
+                        break
+                    value_len = data[pos] & 0x7F
+                    pos += 1
+                    if pos + value_len > len(data):
+                        break
+                    value = data[pos:pos+value_len].decode('utf-8', errors='replace')
+                    headers[name] = value
+                    pos += value_len
 
     def _wrap_ssl(self, sock, host: str):
         """Wrap socket with SSL (DEPRECATED - BoringSSLSocket handles this internally)."""
@@ -659,8 +1016,18 @@ class TLSHttpClient:
         self._log(f"Connection phase took {time.time()-conn_start:.3f}s")
 
         try:
-            # BoringSSLSocket already handles SSL/TLS internally
-            # No need to wrap - connection is already SSL if using https
+            # Check negotiated ALPN protocol
+            negotiated = self._get_negotiated_protocol(sock)
+
+            if negotiated == "h2":
+                # HTTP/2 path with proper fingerprinting
+                self._log("Using HTTP/2 protocol")
+                response = self._send_h2_request(sock, method, path, host, headers, req_body)
+                self._log(f"=== Request completed in {time.time()-total_start:.3f}s (status: {response.status_code}) ===")
+                return response
+
+            # HTTP/1.1 path (fallback)
+            self._log("Using HTTP/1.1 protocol")
 
             # Build and send request
             send_start = time.time()

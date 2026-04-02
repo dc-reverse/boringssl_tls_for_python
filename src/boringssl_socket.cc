@@ -72,6 +72,7 @@ public:
 
     static const char* GetGroupName(uint16_t group_id) {
         switch (group_id) {
+            case 0x11EC: return "x25519_mlkem768";
             case 0x001D: return "x25519";
             case 0x0017: return "p256";
             case 0x0018: return "p384";
