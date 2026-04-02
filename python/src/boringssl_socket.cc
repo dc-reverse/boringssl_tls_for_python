@@ -95,6 +95,11 @@ public:
         SSL_CTX_set_max_proto_version(ssl_ctx_, TLS1_3_VERSION);
         SSL_CTX_set_verify(ssl_ctx_, SSL_VERIFY_NONE, nullptr);
 
+        // Enable GREASE if configured
+        if (config_.enable_grease) {
+            SSL_CTX_set_grease_enabled(ssl_ctx_, 1);
+        }
+
         return true;
     }
 
@@ -103,28 +108,63 @@ public:
             return;
         }
 
-        // Configure cipher suites for TLS 1.2 only
-        // TLS 1.3 cipher suites in BoringSSL are handled automatically
+        debugLog("Configuring TLS fingerprint...");
+
+        // 1. Configure cipher suites
         if (!config_.cipher_suites.empty()) {
+            // Build cipher list string for TLS 1.2 and TLS 1.3
             std::string cipher_list;
             for (uint16_t cs : config_.cipher_suites) {
-                // Skip TLS 1.3 cipher suites (0x1301-0x1303) - BoringSSL handles these
-                if (cs >= 0x1301 && cs <= 0x1303) {
-                    continue;
-                }
                 if (!cipher_list.empty()) cipher_list += ":";
                 cipher_list += GetCipherName(cs);
             }
 
             if (!cipher_list.empty()) {
+                debugLog("Setting cipher list: " + cipher_list);
                 if (SSL_set_cipher_list(ssl_, cipher_list.c_str()) != 1) {
-                    debugLog("Warning: Failed to set cipher list, using defaults");
+                    debugLog("Warning: Failed to set cipher list");
                 }
             }
         }
 
-        // Note: BoringSSL handles signature algorithms and named groups automatically
-        // Custom configuration of these may cause compatibility issues
+        // 2. Configure named groups (curves)
+        if (!config_.named_groups.empty()) {
+            std::string groups;
+            for (uint16_t g : config_.named_groups) {
+                if (!groups.empty()) groups += ":";
+                groups += GetGroupName(g);
+            }
+
+            if (!groups.empty()) {
+                debugLog("Setting groups: " + groups);
+                if (SSL_set1_groups_list(ssl_, groups.c_str()) != 1) {
+                    debugLog("Warning: Failed to set groups list");
+                }
+            }
+        }
+
+        // 3. Configure ALPN protocols
+        if (!config_.alpn_protocols.empty()) {
+            // Build ALPN protocol list (length-prefixed strings)
+            std::vector<uint8_t> alpn_data;
+            for (const std::string& proto : config_.alpn_protocols) {
+                alpn_data.push_back(static_cast<uint8_t>(proto.length()));
+                alpn_data.insert(alpn_data.end(), proto.begin(), proto.end());
+            }
+
+            std::string alpn_str;
+            for (const auto& p : config_.alpn_protocols) {
+                if (!alpn_str.empty()) alpn_str += ",";
+                alpn_str += p;
+            }
+            debugLog("Setting ALPN: " + alpn_str);
+
+            if (SSL_set_alpn_protos(ssl_, alpn_data.data(), alpn_data.size()) != 0) {
+                debugLog("Warning: Failed to set ALPN protocols");
+            }
+        }
+
+        debugLog("TLS fingerprint configuration complete");
     }
 
     int SetNonBlocking(bool non_block) {
