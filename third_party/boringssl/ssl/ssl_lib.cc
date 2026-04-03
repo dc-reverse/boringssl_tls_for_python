@@ -2457,6 +2457,13 @@ int SSL_set_extension_order(SSL *ssl, const uint8_t *order, size_t order_len) {
   return 1;
 }
 
+void SSL_set_record_size_limit_enabled(SSL *ssl, int enabled) {
+  if (!ssl->config) {
+    return;
+  }
+  ssl->config->enable_record_size_limit = !!enabled;
+}
+
 int SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t alg_id,
                                      ssl_cert_compression_func_t compress,
                                      ssl_cert_decompression_func_t decompress) {

@@ -3131,6 +3131,38 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
       hs, out, /*use_legacy_codepoint=*/true);
 }
 
+// record_size_limit
+//
+// https://www.rfc-editor.org/rfc/rfc8449.html
+
+static bool ext_record_size_limit_add_clienthello(
+    const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
+    ssl_client_hello_type_t type) {
+  if (!hs->config->enable_record_size_limit) {
+    return true;
+  }
+  CBB contents;
+  if (!CBB_add_u16(out_compressible, TLSEXT_TYPE_record_size_limit) ||
+      !CBB_add_u16_length_prefixed(out_compressible, &contents) ||
+      !CBB_add_u16(&contents, 16385) ||
+      !CBB_flush(out_compressible)) {
+    return false;
+  }
+  return true;
+}
+
+static bool ext_record_size_limit_parse_serverhello(SSL_HANDSHAKE *hs,
+                                                     uint8_t *alert,
+                                                     CBS *contents) {
+  return true;
+}
+
+static bool ext_record_size_limit_parse_clienthello(SSL_HANDSHAKE *hs,
+                                                     uint8_t *alert,
+                                                     CBS *contents) {
+  return true;
+}
+
 // Delegated credentials.
 //
 // https://www.rfc-editor.org/rfc/rfc9345.html
@@ -3977,6 +4009,13 @@ static const struct tls_extension kExtensions[] = {
         ext_server_cert_type_parse_serverhello,
         ext_server_cert_type_parse_clienthello,
         ext_server_cert_type_add_serverhello,
+    },
+    {
+        TLSEXT_TYPE_record_size_limit,
+        ext_record_size_limit_add_clienthello,
+        ext_record_size_limit_parse_serverhello,
+        ext_record_size_limit_parse_clienthello,
+        dont_add_serverhello,
     },
 };
 

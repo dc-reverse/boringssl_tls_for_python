@@ -3473,6 +3473,10 @@ OPENSSL_EXPORT void SSL_set_delegated_credentials_enabled(SSL *ssl, int enabled)
 OPENSSL_EXPORT int SSL_set_extension_order(SSL *ssl, const uint8_t *order,
                                            size_t order_len);
 
+// SSL_set_record_size_limit_enabled configures whether |ssl| should advertise
+// the record_size_limit extension (RFC 8449) in ClientHello.
+OPENSSL_EXPORT void SSL_set_record_size_limit_enabled(SSL *ssl, int enabled);
+
 
 // Certificate compression.
 //

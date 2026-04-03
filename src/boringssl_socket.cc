@@ -377,6 +377,8 @@ public:
         // Firefox = no GREASE + no permute_extensions
         if (!config_.enable_grease && !config_.permute_extensions) {
             SSL_set_delegated_credentials_enabled(ssl_, 1);
+            // Enable record_size_limit (ext 28) - Firefox sends this
+            SSL_set_record_size_limit_enabled(ssl_, 1);
         }
 
         // Set Safari-specific extension order to differentiate from Firefox

@@ -182,11 +182,13 @@ TLSFingerprintConfig BrowserFingerprints::FirefoxDesktop() {
         0x0201,  // rsa_pkcs1_sha1
     };
 
-    // Firefox named groups (BoringSSL-supported only, no ffdhe)
+    // Firefox 133+ named groups (BoringSSL-supported only, no ffdhe)
     config.named_groups = {
+        0x11EC,  // x25519_mlkem768 (4588) - post-quantum hybrid
         0x001D,  // x25519
         0x0017,  // secp256r1
         0x0018,  // secp384r1
+        0x0019,  // secp521r1
     };
 
     config.alpn_protocols = {"h2", "http/1.1"};

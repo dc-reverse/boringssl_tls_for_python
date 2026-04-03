@@ -3453,6 +3453,10 @@ struct SSL_CONFIG {
   // Firefox sends this extension; Chrome and Safari do not.
   bool enable_delegated_credentials : 1;
 
+  // enable_record_size_limit if set indicates the client should advertise
+  // the record_size_limit extension (RFC 8449) in ClientHello.
+  bool enable_record_size_limit : 1;
+
   // custom_extension_order, if non-empty, specifies a deterministic permutation
   // for ClientHello extensions. Each element is an index into the kExtensions
   // table. When set, this takes priority over random permutation.
