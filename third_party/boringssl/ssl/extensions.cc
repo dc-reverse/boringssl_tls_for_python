@@ -3990,6 +3990,46 @@ static_assert(kNumExtensions <=
               "too many extensions for received bitset");
 
 bool ssl_setup_extension_permutation(SSL_HANDSHAKE *hs) {
+  // If a custom extension order is provided, use it directly.
+  if (!hs->config->custom_extension_order.empty()) {
+    Array<uint8_t> permutation;
+    if (!permutation.InitForOverwrite(kNumExtensions)) {
+      return false;
+    }
+    // Start with identity permutation
+    for (size_t i = 0; i < kNumExtensions; i++) {
+      permutation[i] = i;
+    }
+    // Apply custom order: place custom-ordered extensions first,
+    // then remaining extensions in their original order.
+    size_t pos = 0;
+    // First, mark which indices are in the custom order
+    bool used[kNumExtensions] = {};
+    for (size_t i = 0; i < hs->config->custom_extension_order.size() &&
+                        i < kNumExtensions; i++) {
+      uint8_t idx = hs->config->custom_extension_order[i];
+      if (idx < kNumExtensions) {
+        used[idx] = true;
+      }
+    }
+    // Place custom-ordered indices first
+    for (size_t i = 0; i < hs->config->custom_extension_order.size() &&
+                        i < kNumExtensions; i++) {
+      uint8_t idx = hs->config->custom_extension_order[i];
+      if (idx < kNumExtensions) {
+        permutation[pos++] = idx;
+      }
+    }
+    // Then place remaining indices in original order
+    for (size_t i = 0; i < kNumExtensions; i++) {
+      if (!used[i]) {
+        permutation[pos++] = i;
+      }
+    }
+    hs->extension_permutation = std::move(permutation);
+    return true;
+  }
+
   if (!hs->config->permute_extensions) {
     return true;
   }

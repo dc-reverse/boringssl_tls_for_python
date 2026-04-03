@@ -115,6 +115,8 @@ def test_pool(pool_size=10):
         except Exception as e:
             print(f"  [{i:>2}] ❌ {e}")
 
+        time.sleep(2)
+
     # 汇总
     print(f"\n  --- 汇总 ---")
     print(f"  总请求数: {len(results)}")
@@ -161,6 +163,7 @@ def test_session_stability():
         ja3_list.append(ja3)
         print(f"\n  [{i}]")
         print_fingerprint(data, prefix="    ")
+        time.sleep(2)
 
     if len(set(ja3_list)) == 1:
         print(f"  ✅ 3 次请求 JA3 一致: {ja3_list[0]}")
@@ -178,7 +181,7 @@ if __name__ == "__main__":
     print("\n\n>>> 第一部分: 单浏览器指纹检测")
     for bt in BROWSER_TYPES:
         test_single(bt)
-        time.sleep(0.5)
+        time.sleep(2)
 
     # 2. 指纹池批量测试
     print("\n\n>>> 第二部分: 指纹池批量检测")

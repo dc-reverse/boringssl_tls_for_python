@@ -379,6 +379,33 @@ public:
             SSL_set_delegated_credentials_enabled(ssl_, 1);
         }
 
+        // Set Safari-specific extension order to differentiate from Firefox
+        // Safari = GREASE enabled + no permute_extensions
+        // Real Safari 17+ extension order (by kExtensions index):
+        //  0=SNI, 4=groups, 5=ec_point, 9=sigalgs, 2=EMS, 3=renegotiate,
+        //  6=ticket, 11=SCT, 8=OCSP, 17=versions, 15=psk_modes, 14=key_share,
+        //  7=ALPN, 21=cert_compress
+        if (config_.enable_grease && !config_.permute_extensions) {
+            const uint8_t safari_ext_order[] = {
+                0,   // server_name (0x0000)
+                4,   // supported_groups (0x000a)
+                5,   // ec_point_formats (0x000b)
+                9,   // signature_algorithms (0x000d)
+                2,   // extended_master_secret (0x0017)
+                3,   // renegotiate (0xff01)
+                6,   // session_ticket (0x0023)
+                11,  // certificate_timestamp (0x0012)
+                8,   // status_request (0x0005)
+                17,  // supported_versions (0x002b)
+                15,  // psk_key_exchange_modes (0x002d)
+                14,  // key_share (0x0033)
+                7,   // ALPN (0x0010)
+                21,  // cert_compression (0x001b)
+            };
+            SSL_set_extension_order(ssl_, safari_ext_order,
+                                    sizeof(safari_ext_order));
+        }
+
         SSL_set_fd(ssl_, sock_fd_);
 
         if (SetNonBlocking(true) < 0) {

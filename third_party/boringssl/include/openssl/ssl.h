@@ -3466,6 +3466,13 @@ OPENSSL_EXPORT void SSL_set_alps_use_new_codepoint(SSL *ssl, int use_new);
 // Firefox sends this extension; Chrome and Safari do not.
 OPENSSL_EXPORT void SSL_set_delegated_credentials_enabled(SSL *ssl, int enabled);
 
+// SSL_set_extension_order configures a custom deterministic extension order
+// for ClientHello. |order| is an array of indices into the internal extension
+// table. Extensions listed first appear first in ClientHello; unlisted
+// extensions follow in default order. Returns 1 on success, 0 on error.
+OPENSSL_EXPORT int SSL_set_extension_order(SSL *ssl, const uint8_t *order,
+                                           size_t order_len);
+
 
 // Certificate compression.
 //

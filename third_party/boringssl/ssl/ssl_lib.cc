@@ -2446,6 +2446,17 @@ void SSL_set_delegated_credentials_enabled(SSL *ssl, int enabled) {
   ssl->config->enable_delegated_credentials = !!enabled;
 }
 
+int SSL_set_extension_order(SSL *ssl, const uint8_t *order, size_t order_len) {
+  if (!ssl->config) {
+    return 0;
+  }
+  if (!ssl->config->custom_extension_order.InitForOverwrite(order_len)) {
+    return 0;
+  }
+  OPENSSL_memcpy(ssl->config->custom_extension_order.data(), order, order_len);
+  return 1;
+}
+
 int SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t alg_id,
                                      ssl_cert_compression_func_t compress,
                                      ssl_cert_decompression_func_t decompress) {

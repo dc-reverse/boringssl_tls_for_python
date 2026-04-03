@@ -3452,6 +3452,11 @@ struct SSL_CONFIG {
   // support for delegated credentials (RFC 9345) in ClientHello.
   // Firefox sends this extension; Chrome and Safari do not.
   bool enable_delegated_credentials : 1;
+
+  // custom_extension_order, if non-empty, specifies a deterministic permutation
+  // for ClientHello extensions. Each element is an index into the kExtensions
+  // table. When set, this takes priority over random permutation.
+  Array<uint8_t> custom_extension_order;
 };
 
 // From RFC 8446, used in determining PSK modes.
