@@ -2439,6 +2439,13 @@ void SSL_set_alps_use_new_codepoint(SSL *ssl, int use_new) {
   ssl->config->alps_use_new_codepoint = !!use_new;
 }
 
+void SSL_set_delegated_credentials_enabled(SSL *ssl, int enabled) {
+  if (!ssl->config) {
+    return;
+  }
+  ssl->config->enable_delegated_credentials = !!enabled;
+}
+
 int SSL_CTX_add_cert_compression_alg(SSL_CTX *ctx, uint16_t alg_id,
                                      ssl_cert_compression_func_t compress,
                                      ssl_cert_decompression_func_t decompress) {

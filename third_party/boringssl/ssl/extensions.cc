@@ -3138,7 +3138,34 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
 static bool ext_delegated_credential_add_clienthello(
     const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
     ssl_client_hello_type_t type) {
-  return true;
+  // Only send delegated_credentials extension if explicitly enabled.
+  // Firefox sends this extension; Chrome and Safari do not.
+  if (!hs->config->enable_delegated_credentials) {
+    return true;
+  }
+
+  // The extension payload is a list of signature algorithms the client
+  // supports for delegated credentials (RFC 9345 Section 4.1.1).
+  // Use the same verify signature algorithms configured for this connection.
+  if (hs->config->verify_sigalgs.empty()) {
+    return true;
+  }
+
+  CBB contents, sigalgs_cbb;
+  if (!CBB_add_u16(out_compressible,
+                   TLSEXT_TYPE_delegated_credential) ||
+      !CBB_add_u16_length_prefixed(out_compressible, &contents) ||
+      !CBB_add_u16_length_prefixed(&contents, &sigalgs_cbb)) {
+    return false;
+  }
+
+  for (uint16_t sigalg : hs->config->verify_sigalgs) {
+    if (!CBB_add_u16(&sigalgs_cbb, sigalg)) {
+      return false;
+    }
+  }
+
+  return CBB_flush(out_compressible);
 }
 
 static bool ext_delegated_credential_parse_clienthello(SSL_HANDSHAKE *hs,

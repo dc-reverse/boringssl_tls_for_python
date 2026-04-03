@@ -3447,6 +3447,11 @@ struct SSL_CONFIG {
   // alps_use_new_codepoint if set indicates we use new ALPS extension codepoint
   // to negotiate and convey application settings.
   bool alps_use_new_codepoint : 1;
+
+  // enable_delegated_credentials if set indicates the client should advertise
+  // support for delegated credentials (RFC 9345) in ClientHello.
+  // Firefox sends this extension; Chrome and Safari do not.
+  bool enable_delegated_credentials : 1;
 };
 
 // From RFC 8446, used in determining PSK modes.

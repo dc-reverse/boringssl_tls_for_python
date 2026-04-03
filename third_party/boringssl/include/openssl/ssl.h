@@ -3461,6 +3461,11 @@ OPENSSL_EXPORT int SSL_has_application_settings(const SSL *ssl);
 // codepoint. By default, the new codepoint is used.
 OPENSSL_EXPORT void SSL_set_alps_use_new_codepoint(SSL *ssl, int use_new);
 
+// SSL_set_delegated_credentials_enabled configures whether |ssl| should
+// advertise support for delegated credentials (RFC 9345) in ClientHello.
+// Firefox sends this extension; Chrome and Safari do not.
+OPENSSL_EXPORT void SSL_set_delegated_credentials_enabled(SSL *ssl, int enabled);
+
 
 // Certificate compression.
 //
