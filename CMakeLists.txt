@@ -61,7 +61,14 @@ endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+
+    if(NOT Python3_Development_FOUND)
+        message(WARNING "Python3 Development headers not found. "
+            "CMake Python bindings will not be built. "
+            "Use 'python setup.py build_ext' in python/ to build the extension instead.")
+        set(BUILD_PYTHON_BINDINGS OFF)
+    else()
 
     # Try to find pybind11
     find_package(pybind11 CONFIG QUIET)
@@ -106,6 +113,7 @@ if(BUILD_PYTHON_BINDINGS)
     else()
         message(WARNING "pybind11 not found. Python bindings will not be built.")
     endif()
+    endif() # Python3_Development_FOUND
 else()
     message(STATUS "Python bindings disabled")
 endif()

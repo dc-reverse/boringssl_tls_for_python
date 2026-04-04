@@ -38,6 +38,7 @@ public:
     bool debug_ = false;
     std::string last_error_;
     std::string debug_log_;
+    std::string resolved_ip_;
     TLSFingerprintConfig config_;
 
     void debugLog(const std::string& msg) {
@@ -278,25 +279,46 @@ public:
     }
 
     int ConnectTCP(const std::string& host, int port, int timeout_ms) {
-        debugLog("Resolving DNS for " + host + "...");
-        auto dns_start = std::chrono::steady_clock::now();
-
-        struct hostent* he = gethostbyname(host.c_str());
-        if (!he) {
-            last_error_ = "Failed to resolve hostname: " + host;
-            debugLog("ERROR: " + last_error_);
-            return -1;
-        }
-
-        auto dns_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - dns_start).count();
-        debugLog("DNS resolved in " + std::to_string(dns_elapsed) + "ms");
-
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
-        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+
+        // If we have a pre-resolved IP, use it directly (skip DNS)
+        if (!resolved_ip_.empty()) {
+            debugLog("Using pre-resolved IP: " + resolved_ip_);
+            if (inet_pton(AF_INET, resolved_ip_.c_str(), &addr.sin_addr) != 1) {
+                last_error_ = "Invalid pre-resolved IP: " + resolved_ip_;
+                debugLog("ERROR: " + last_error_);
+                return -1;
+            }
+        } else {
+            // Fallback: resolve DNS using getaddrinfo (IPv4 only to avoid AAAA delays)
+            debugLog("Resolving DNS for " + host + "...");
+            auto dns_start = std::chrono::steady_clock::now();
+
+            struct addrinfo hints, *result = nullptr;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_INET;       // IPv4 only
+            hints.ai_socktype = SOCK_STREAM;
+
+            int gai_err = getaddrinfo(host.c_str(), nullptr, &hints, &result);
+            if (gai_err != 0 || !result) {
+                last_error_ = "Failed to resolve hostname: " + host +
+                              " (" + gai_strerror(gai_err) + ")";
+                debugLog("ERROR: " + last_error_);
+                if (result) freeaddrinfo(result);
+                return -1;
+            }
+
+            auto* sa = reinterpret_cast<struct sockaddr_in*>(result->ai_addr);
+            memcpy(&addr.sin_addr, &sa->sin_addr, sizeof(sa->sin_addr));
+            freeaddrinfo(result);
+
+            auto dns_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - dns_start).count();
+            debugLog("DNS resolved in " + std::to_string(dns_elapsed) + "ms");
+        }
 
         debugLog("Connecting to " + host + ":" + std::to_string(port) + "...");
         auto conn_start = std::chrono::steady_clock::now();
@@ -442,6 +464,13 @@ public:
 
         SetNonBlocking(false);
 
+        // Set socket recv/send timeout to prevent indefinite blocking
+        struct timeval tv;
+        tv.tv_sec = 30;
+        tv.tv_usec = 0;
+        setsockopt(sock_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sock_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
         auto ssl_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - ssl_start).count();
         debugLog("SSL handshake completed in " + std::to_string(ssl_elapsed) + "ms");
@@ -542,6 +571,15 @@ public:
 
     void Close() {
         if (ssl_) {
+            // Set a short timeout for SSL_shutdown to avoid blocking
+            if (sock_fd_ >= 0) {
+                struct timeval tv;
+                tv.tv_sec = 2;
+                tv.tv_usec = 0;
+                setsockopt(sock_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                setsockopt(sock_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            }
+            // Only attempt shutdown once, don't wait for close_notify response
             SSL_shutdown(ssl_);
             SSL_free(ssl_);
             ssl_ = nullptr;
@@ -565,6 +603,10 @@ BoringSSLSocket::~BoringSSLSocket() = default;
 
 void BoringSSLSocket::SetConfig(const TLSFingerprintConfig& config) {
     impl_->config_ = config;
+}
+
+void BoringSSLSocket::SetResolvedIP(const std::string& ip) {
+    impl_->resolved_ip_ = ip;
 }
 
 int BoringSSLSocket::Connect(const std::string& host, int port, int timeout_ms) {

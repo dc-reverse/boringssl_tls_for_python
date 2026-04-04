@@ -436,7 +436,7 @@ class TLSHttpClient:
         sock.set_config(config)
         return sock
 
-    def _create_connection(self, host: str, port: int):
+    def _create_connection(self, host: str, port: int, resolved_ip: Optional[str] = None):
         """Create a BoringSSL connection to the target."""
         timeout_ms = int(self._timeout * 1000)
 
@@ -470,6 +470,12 @@ class TLSHttpClient:
             start = time.time()
 
             sock = self._create_boringssl_socket()
+
+            # Pass pre-resolved IP to skip redundant DNS in C++
+            if resolved_ip:
+                sock.set_resolved_ip(resolved_ip)
+                self._log(f"Using pre-resolved IP: {resolved_ip}")
+
             result = sock.connect(host, port, timeout_ms)
 
             if result != 0:
@@ -628,9 +634,14 @@ class TLSHttpClient:
         buf = initial_buf
         max_reads = 200
         import time as _time
+        read_deadline = _time.time() + 30  # 30s total read timeout
 
         for _ in range(max_reads):
             if stream_ended:
+                break
+
+            if _time.time() > read_deadline:
+                self._log("H2 response read deadline exceeded")
                 break
 
             # Only read from socket if buffer doesn't have a complete frame
@@ -1042,7 +1053,12 @@ class TLSHttpClient:
 
         # Create connection
         conn_start = time.time()
-        sock = self._create_connection(host, port)
+        try:
+            sock = self._create_connection(host, port, resolved_ip=ip)
+        except Exception as e:
+            elapsed = time.time() - total_start
+            self._log(f"Connection failed after {elapsed:.3f}s: {e}")
+            raise ConnectionError(f"Connection failed: {e}")
         self._log(f"Connection phase took {time.time()-conn_start:.3f}s")
 
         try:

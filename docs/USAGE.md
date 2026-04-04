@@ -11,8 +11,10 @@
 - [快速开始](#快速开始)
 - [API 参考](#api-参考)
 - [浏览器指纹预设](#浏览器指纹预设)
+- [HTTP/2 指纹](#http2-指纹)
 - [自定义指纹配置](#自定义指纹配置)
 - [高级用法](#高级用法)
+- [调试与排查](#调试与排查)
 - [完整示例](#完整示例)
 - [常见问题](#常见问题)
 
@@ -20,63 +22,45 @@
 
 ## 安装
 
-### 方式一：从 Wheel 文件安装（推荐）
-
-**Step 1: 构建 Wheel 包**
+### 方式一：从源码编译安装（推荐）
 
 ```bash
-cd tls_for_python
+cd boringssl_tls_for_python
 
-# 完整构建（包含编译和打包）
+# 完整构建（编译 BoringSSL + C++ 扩展 + 打包）
 ./build.sh --clean
 
 # 生成的 wheel 文件位于：
 # python/dist/tls_fingerprint-1.0.0-py3-none-any.whl
 ```
 
-**Step 2: 安装 Wheel**
+> **注意**: 构建脚本会自动检测 `.venv` 虚拟环境，优先使用虚拟环境中的 Python。
+
+### 方式二：安装 Wheel
 
 ```bash
-# 安装到当前 Python 环境
 pip3 install python/dist/tls_fingerprint-1.0.0-py3-none-any.whl
-
-# 或者安装到用户目录
-pip3 install --user python/dist/tls_fingerprint-1.0.0-py3-none-any.whl
 ```
 
-**Step 3: 验证安装**
+### 验证安装
 
 ```python
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-print("✅ 安装成功!")
+from tls_fingerprint import TLSHttpClient
 
-config = BrowserFingerprints.chrome_desktop()
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-client_hello = generator.generate_client_hello("example.com")
-print(f"ClientHello: {len(client_hello)} bytes")
+client = TLSHttpClient(browser_type="chrome", debug=True)
+response = client.get("https://httpbin.org/get")
+print(f"Status: {response.status_code}")
+print(f"Body: {response.text[:200]}")
 ```
 
-### 方式二：分发到其他机器
+### 依赖
 
-将 wheel 文件复制到目标机器，然后安装：
-
-```bash
-# 在目标机器上执行
-pip3 install tls_fingerprint-1.0.0-py3-none-any.whl
-```
-
-**注意**: Wheel 文件是跨平台通用的 pure Python 包格式，但包含的 `.so` 文件是平台特定的。
-
-当前编译的 wheel 仅支持：
-- macOS (arm64/x86_64)
 - Python 3.8+
-
-### 方式三：从源码编译安装
+- `hpack` — HTTP/2 头部编码/解码（必需）
+- `brotli` — Brotli 解压缩（可选，用于 `content-encoding: br` 响应）
 
 ```bash
-cd tls_for_python
-./build.sh --clean --install
+pip install hpack brotli
 ```
 
 ### 卸载
@@ -85,160 +69,29 @@ cd tls_for_python
 pip3 uninstall tls-fingerprint
 ```
 
-### 更新安装
-
-```bash
-# 重新构建并安装
-cd tls_for_python
-./build.sh --clean
-pip3 uninstall tls-fingerprint -y
-pip3 install python/dist/tls_fingerprint-1.0.0-py3-none-any.whl
-```
-
----
-
-## Wheel 包说明
-
-### 包内容
-
-```
-tls_fingerprint-1.0.0-py3-none-any.whl
-├── tls_fingerprint/
-│   ├── __init__.py                        # Python 包入口
-│   └── _tls_fingerprint.cpython-312-*.so  # 编译的扩展模块
-└── tls_fingerprint-1.0.0.dist-info/       # 包元数据
-```
-
-### 文件大小
-
-约 **133KB**，非常轻量。
-
-### 分发方式
-
-| 方式 | 命令 |
-|------|------|
-| 本地安装 | `pip install tls_fingerprint-1.0.0-py3-none-any.whl` |
-| 从 HTTP 服务器 | `pip install http://example.com/tls_fingerprint-1.0.0-py3-none-any.whl` |
-| 从文件服务器 | `pip install /path/to/tls_fingerprint-1.0.0-py3-none-any.whl` |
-| requirements.txt | `/path/to/tls_fingerprint-1.0.0-py3-none-any.whl` |
-
----
-
-## 在 requirements.txt 中使用
-
-```txt
-# 方式一：使用本地路径
-/path/to/tls_fingerprint-1.0.0-py3-none-any.whl
-
-# 方式二：使用 HTTP URL
-http://your-server.com/packages/tls_fingerprint-1.0.0-py3-none-any.whl
-```
-
-然后：
-
-```bash
-pip3 install -r requirements.txt
-```
-
----
-
-## 手动安装到其他项目（备选方案）
-
-编译完成后，可以通过以下方式将库安装到其他项目中：
-
-#### 方式一：复制模块目录
-
-```bash
-# 编译后，将 python/tls_fingerprint 目录复制到目标项目
-cp -r tls_for_python/python/tls_fingerprint /path/to/your_project/
-
-# 然后在代码中直接导入
-cd /path/to/your_project
-python3 -c "from tls_fingerprint import BrowserFingerprints; print(BrowserFingerprints.chrome_desktop())"
-```
-
-#### 方式二：添加到 PYTHONPATH
-
-```bash
-# 将 python 目录添加到 PYTHONPATH
-export PYTHONPATH="/path/to/tls_for_python/python:$PYTHONPATH"
-
-# 然后在任意位置导入使用
-python3 -c "from tls_fingerprint import BrowserFingerprints; print('OK')"
-```
-
-#### 方式三：使用 sys.path 动态添加
-
-```python
-import sys
-sys.path.insert(0, '/path/to/tls_for_python/python')
-
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-
-config = BrowserFingerprints.chrome_desktop()
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-```
-
-#### 方式四：安装到 site-packages（推荐）
-
-```bash
-# 手动复制到 Python site-packages
-PYTHON_SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
-cp -r tls_for_python/python/tls_fingerprint "$PYTHON_SITE_PACKAGES/"
-
-# 验证安装
-python3 -c "import tls_fingerprint; print(tls_fingerprint.__version__)"
-```
-
-#### 方式五：打包为 wheel 文件
-
-```bash
-# 如果网络可用，可以打包为 wheel
-cd tls_for_python/python
-pip3 wheel . --no-deps -w dist/
-
-# 然后在其他机器上安装
-pip3 install dist/tls_fingerprint-1.0.0-*.whl
-```
-
-#### 目录结构说明
-
-编译完成后，需要的文件：
-
-```
-tls_for_python/python/tls_fingerprint/
-├── __init__.py                      # Python 包初始化
-├── _tls_fingerprint.cpython-312-*.so  # 编译的扩展模块
-└── utils.py                         # 工具函数（可选）
-```
-
-只需将整个 `tls_fingerprint` 目录复制到目标位置即可。
-
 ---
 
 ## 可用功能
 
-### 高级 API（推荐）
+### HTTP 客户端（推荐入口）
 
 | 类/函数 | 说明 |
 |------|------|
-| `TLSSession` | TLS 会话类，创建对象时自动分配指纹，同一会话保持相同指纹 |
-| `TLSClient` | 多会话管理器，管理多个独立的 TLS 会话 |
-| `TLSFingerprintPool` | 预生成指纹池，高性能场景使用 |
-| `create_session(browser_type)` | 快速创建会话 |
-| `create_random_session()` | 快速创建随机指纹会话 |
-| `generate_client_hello(host, browser_type)` | 快速生成 ClientHello |
-
-### HTTP 客户端（支持代理）
-
-| 类/函数 | 说明 |
-|------|------|
-| `TLSHttpClient` | HTTP 客户端，支持自定义 TLS 指纹和代理 |
+| `TLSHttpClient` | HTTP 客户端，支持自定义 TLS 指纹、HTTP/2、代理 |
 | `ProxyConfig` | 代理配置类（HTTP/HTTPS/SOCKS5） |
 | `HttpResponse` | HTTP 响应对象 |
 | `http_get(url, browser_type, proxy)` | 快速 GET 请求 |
 | `http_post(url, browser_type, proxy, body)` | 快速 POST 请求 |
+
+### 会话管理
+
+| 类/函数 | 说明 |
+|------|------|
+| `TLSSession` | TLS 会话类，同一会话保持相同指纹 |
+| `TLSClient` | 多会话管理器 |
+| `TLSFingerprintPool` | 预生成指纹池，高性能场景使用 |
+| `create_session(browser_type)` | 快速创建会话 |
+| `create_random_session()` | 快速创建随机指纹会话 |
 
 ### 核心类
 
@@ -249,308 +102,393 @@ tls_for_python/python/tls_fingerprint/
 | `TLSFingerprintAnalyzer` | TLS 指纹分析器 |
 | `BrowserFingerprints` | 浏览器指纹预设工厂 |
 
-### 浏览器指纹预设
-
-| 方法 | 说明 |
-|------|------|
-| `BrowserFingerprints.chrome_desktop()` | Chrome 桌面版指纹 |
-| `BrowserFingerprints.chrome_android()` | Chrome Android 指纹 |
-| `BrowserFingerprints.firefox_desktop()` | Firefox 桌面版指纹 |
-| `BrowserFingerprints.safari()` | Safari 指纹 |
-| `BrowserFingerprints.edge()` | Edge 指纹（与 Chrome 相同） |
-
-### 工具函数
-
-| 函数 | 说明 |
-|------|------|
-| `get_cipher_suite_name(cipher_suite)` | 获取密码套件可读名称 |
-| `get_cipher_suite_version(cipher_suite)` | 获取密码套件 TLS 版本 |
-| `get_signature_algorithm_name(sig_alg)` | 获取签名算法可读名称 |
-| `get_named_group_name(named_group)` | 获取命名组可读名称 |
-
-### 常量
-
-#### 密码套件常量
-
-```python
-from tls_fingerprint import (
-    TLS_AES_128_GCM_SHA256,           # 0x1301
-    TLS_AES_256_GCM_SHA384,           # 0x1302
-    TLS_CHACHA20_POLY1305_SHA256,     # 0x1303
-    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,  # 0xC02B
-    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,    # 0xC02F
-)
-```
-
-#### 签名算法常量
-
-```python
-from tls_fingerprint import (
-    ECDSA_SECP256R1_SHA256,  # 0x0403
-    RSA_PSS_RSAE_SHA256,     # 0x0804
-    RSA_PKCS1_SHA256,        # 0x0401
-)
-```
-
-#### 命名组常量
-
-```python
-from tls_fingerprint import (
-    X25519,      # 0x001D
-    SECP256R1,   # 0x0017
-    SECP384R1,   # 0x0018
-)
-```
-
 ---
 
 ## 快速开始
 
-### 推荐：使用高级 API（TLSSession）
-
-```python
-from tls_fingerprint import TLSSession, TLSClient
-
-# 方式1: 创建随机指纹会话（推荐）
-session = TLSSession(browser_type="random")
-
-# 方式2: 创建指定浏览器指纹会话
-session = TLSSession(browser_type="chrome")  # chrome, firefox, safari, edge
-
-# 生成 ClientHello（同一会话使用相同指纹）
-client_hello = session.generate_client_hello("example.com")
-print(f"Session ID: {session.session_id}")
-print(f"Browser: {session.browser_type}")
-print(f"ClientHello: {len(client_hello)} bytes")
-```
-
-### 基本使用（底层 API）
-
-```python
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-
-# 1. 获取 Chrome 浏览器指纹配置
-config = BrowserFingerprints.chrome_desktop()
-
-# 2. 创建生成器并设置配置
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-
-# 3. 生成 ClientHello 数据
-client_hello = generator.generate_client_hello("example.com")
-
-print(f"ClientHello 大小: {len(client_hello)} 字节")
-print(f"ClientHello 数据: {client_hello[:32].hex()}...")
-```
-
----
-
-## 高级 API
-
-### TLSSession - TLS 会话类
-
-创建一个会话，自动管理 TLS 指纹。**同一会话的所有请求使用相同的 TLS 指纹。**
-
-```python
-from tls_fingerprint import TLSSession
-
-# 创建随机浏览器指纹会话
-session = TLSSession(browser_type="random")
-
-# 可用浏览器类型:
-# - "chrome" / "chrome_desktop"  - Chrome 桌面版
-# - "chrome_android"             - Chrome Android
-# - "firefox" / "firefox_desktop" - Firefox 桌面版
-# - "safari"                     - Safari
-# - "edge"                       - Edge
-# - "random"                     - 随机选择一个浏览器
-
-# 获取会话信息
-print(f"Session ID: {session.session_id}")       # 唯一会话ID
-print(f"Browser: {session.browser_type}")        # 浏览器类型
-print(f"JA3 Hash: {session.get_ja3_hash()}")     # JA3 指纹哈希
-
-# 生成 ClientHello
-client_hello = session.generate_client_hello("example.com")
-hex_hello = session.get_client_hello_hex("example.com")  # 十六进制格式
-
-# 导出会话信息
-info = session.to_dict()
-# {'session_id': '...', 'browser_type': 'chrome', 'created_at': ..., 'ja3_hash': '...'}
-```
-
-### TLSClient - 多会话管理
-
-管理多个 TLS 会话，适合需要不同指纹的场景。
-
-```python
-from tls_fingerprint import TLSClient
-
-# 创建客户端
-client = TLSClient(default_browser="chrome")
-
-# 创建多个会话
-session1 = client.create_session("chrome")
-session2 = client.create_session("firefox")
-session3 = client.create_session("random")
-
-# 获取会话
-session = client.get_session(session1.session_id)
-
-# 列出所有会话
-for info in client.list_sessions():
-    print(f"Session: {info['session_id']}, Browser: {info['browser_type']}")
-
-# 移除会话
-client.remove_session(session1.session_id)
-
-# 清空所有会话
-client.clear_sessions()
-
-# 获取会话数量
-print(f"Active sessions: {client.session_count}")
-```
-
-### TLSFingerprintPool - 指纹池
-
-预生成多个指纹，适合高性能场景。
-
-```python
-from tls_fingerprint import TLSFingerprintPool
-
-# 创建指纹池（预生成 10 个随机指纹）
-pool = TLSFingerprintPool(pool_size=10)
-
-# 可选: 指定浏览器类型
-pool = TLSFingerprintPool(
-    pool_size=20,
-    browser_types=["chrome", "firefox", "safari"]
-)
-
-# 随机获取一个指纹
-session = pool.get_random()
-
-# 轮询获取指纹（round-robin）
-session = pool.get_next()
-
-# 刷新池（重新生成）
-pool.refresh()
-
-# 获取池大小
-print(f"Pool size: {len(pool)}")
-```
-
-### 便捷函数
-
-```python
-from tls_fingerprint import create_session, create_random_session, generate_client_hello
-
-# 快速创建会话
-session = create_session("chrome")
-
-# 快速创建随机会话
-session = create_random_session()
-
-# 快速生成 ClientHello（一次性使用）
-data = generate_client_hello("example.com", browser_type="chrome")
-```
-
-### 完整示例：多请求保持相同指纹
-
-```python
-from tls_fingerprint import TLSSession
-
-# 创建会话（自动分配指纹）
-session = TLSSession(browser_type="random")
-
-print(f"Using browser: {session.browser_type}")
-print(f"Session ID: {session.session_id}")
-
-# 同一会话的多次请求使用相同指纹
-hosts = ["api.example.com", "www.example.com", "cdn.example.com"]
-
-for host in hosts:
-    client_hello = session.generate_client_hello(host)
-    print(f"{host}: {len(client_hello)} bytes, fingerprint: {session.get_ja3_hash()[:8]}...")
-```
-
-### 完整示例：多账户多指纹
-
-```python
-from tls_fingerprint import TLSClient
-
-# 创建客户端
-client = TLSClient()
-
-# 为每个账户创建独立的会话（不同指纹）
-accounts = ["user1", "user2", "user3"]
-sessions = {}
-
-for account in accounts:
-    session = client.create_session("random")
-    sessions[account] = session
-    print(f"{account}: session={session.session_id}, browser={session.browser_type}")
-
-# 使用时获取对应账户的会话
-def make_request(account, url):
-    session = sessions[account]
-    # 使用 session 进行请求...
-    client_hello = session.generate_client_hello(url)
-    return client_hello
-
-# 每个账户始终使用相同的 TLS 指纹
-make_request("user1", "api.example.com")
-make_request("user2", "api.example.com")
-```
-
----
-
-## HTTP 客户端（支持代理）
-
-### TLSHttpClient - HTTP 客户端
-
-支持自定义 TLS 指纹和代理的 HTTP 客户端。
+### 发送 HTTPS 请求（最常用）
 
 ```python
 from tls_fingerprint import TLSHttpClient
 
-# 创建客户端
+# 创建客户端 — 模拟 Chrome TLS + HTTP/2 指纹
 client = TLSHttpClient(browser_type="chrome")
 
-# 发送请求
-response = client.get("https://httpbin.org/ip")
+# GET 请求
+response = client.get("https://httpbin.org/get")
 print(f"Status: {response.status_code}")
 print(f"Body: {response.text}")
+
+# POST 请求
+response = client.post(
+    "https://httpbin.org/post",
+    body={"key": "value"}
+)
+print(response.json())
 ```
 
-### 代理支持
-
-支持 HTTP/HTTPS/SOCKS5 代理：
+### 使用代理
 
 ```python
 from tls_fingerprint import TLSHttpClient
 
 # HTTP 代理
-client = TLSHttpClient(
-    browser_type="chrome",
-    proxy="http://127.0.0.1:8080"
-)
+client = TLSHttpClient(browser_type="chrome", proxy="http://127.0.0.1:7897")
+
+# SOCKS5 代理
+client = TLSHttpClient(browser_type="firefox", proxy="socks5://127.0.0.1:1080")
 
 # 带认证的代理
 client = TLSHttpClient(
-    browser_type="chrome",
+    browser_type="random",
     proxy="http://user:password@proxy.example.com:8080"
 )
 
-# SOCKS5 代理
+response = client.get("https://httpbin.org/ip")
+print(response.json())
+```
+
+### 开启调试日志
+
+```python
+from tls_fingerprint import TLSHttpClient
+
+client = TLSHttpClient(browser_type="chrome", debug=True)
+response = client.get("https://httpbin.org/get")
+# 调试日志输出到 stderr，包含 DNS 解析、连接、TLS 握手、HTTP/2 帧等详细耗时
+```
+
+### 不同浏览器指纹
+
+```python
+from tls_fingerprint import TLSHttpClient
+
+# 可用指纹: chrome, firefox, safari, edge, random
+for browser in ["chrome", "firefox", "safari"]:
+    client = TLSHttpClient(browser_type=browser)
+    response = client.get("https://tls.peet.ws/api/all")
+    data = response.json()
+    print(f"{browser}: JA4={data.get('ja4', 'N/A')}")
+```
+
+---
+
+## API 参考
+
+### TLSHttpClient
+
+支持自定义 TLS 指纹和 HTTP/2 指纹的 HTTP 客户端。
+
+```python
 client = TLSHttpClient(
-    browser_type="random",
-    proxy="socks5://127.0.0.1:1080"
+    browser_type="chrome",      # chrome, firefox, safari, edge, random
+    session=None,               # 可选：TLSSession 实例（覆盖 browser_type）
+    proxy=None,                 # 可选：代理 URL 或 ProxyConfig
+    timeout=30.0,               # 请求超时（秒）
+    default_headers=None,       # 默认请求头
+    debug=False,                # 开启调试日志
+)
+```
+
+#### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `get(url, headers=None)` | GET 请求 |
+| `post(url, headers=None, body=None)` | POST 请求 |
+| `put(url, headers=None, body=None)` | PUT 请求 |
+| `delete(url, headers=None)` | DELETE 请求 |
+| `head(url, headers=None)` | HEAD 请求 |
+| `request(method, url, headers=None, body=None)` | 通用请求 |
+| `set_proxy(proxy)` | 设置代理 |
+| `clear_proxy()` | 清除代理 |
+
+#### 工作流程
+
+```
+request()
+  ├── DNS 解析 (Python, IPv4 only, getaddrinfo)
+  ├── 创建 BoringSSLSocket (C++ via pybind11)
+  ├── 传递预解析 IP (跳过 C++ 层重复 DNS)
+  ├── TCP 连接
+  ├── TLS 握手 (BoringSSL, 应用浏览器指纹配置)
+  │     ├── 密码套件、签名算法、命名组
+  │     ├── GREASE / 扩展排列 / ALPS / ECH
+  │     ├── 浏览器特定扩展 (record_size_limit, delegated_credentials 等)
+  │     └── 自定义扩展顺序 (Safari)
+  ├── ALPN 协商
+  │     ├── h2 → HTTP/2 路径
+  │     └── http/1.1 → HTTP/1.1 路径
+  └── HTTP/2 路径:
+        ├── Connection Preface
+        ├── SETTINGS (浏览器特定参数)
+        ├── WINDOW_UPDATE (浏览器特定值)
+        ├── HEADERS 帧 (浏览器特定伪头顺序)
+        └── 读取响应
+```
+
+### HttpResponse
+
+```python
+response = client.get("https://example.com")
+
+response.status_code     # int: 200, 404, ...
+response.headers         # dict: {"content-type": "...", ...}
+response.body            # bytes: 原始响应体
+response.text            # str: UTF-8 解码后的文本
+response.json()          # Any: 解析 JSON
+response.http_version    # str: "HTTP/2" 或 "HTTP/1.1"
+```
+
+### ProxyConfig
+
+```python
+from tls_fingerprint import ProxyConfig
+
+# 从 URL 创建
+proxy = ProxyConfig.from_url("socks5://user:pass@127.0.0.1:1080")
+
+# 手动创建
+proxy = ProxyConfig(
+    host="127.0.0.1",
+    port=1080,
+    proxy_type="socks5",    # http, https, socks5
+    username="user",
+    password="pass",
+)
+```
+
+### TLSSession
+
+创建会话，同一会话的所有请求使用相同的 TLS 指纹。
+
+```python
+from tls_fingerprint import TLSSession
+
+session = TLSSession(browser_type="random")
+
+print(f"Session ID: {session.session_id}")
+print(f"Browser: {session.browser_type}")
+print(f"JA3 Hash: {session.get_ja3_hash()}")
+
+# 与 TLSHttpClient 一起使用
+client = TLSHttpClient(session=session)
+```
+
+### TLSClient — 多会话管理
+
+```python
+from tls_fingerprint import TLSClient
+
+client = TLSClient(default_browser="chrome")
+
+session1 = client.create_session("chrome")
+session2 = client.create_session("firefox")
+
+for info in client.list_sessions():
+    print(f"Session: {info['session_id']}, Browser: {info['browser_type']}")
+```
+
+### TLSFingerprintPool — 指纹池
+
+```python
+from tls_fingerprint import TLSFingerprintPool
+
+pool = TLSFingerprintPool(
+    pool_size=20,
+    browser_types=["chrome", "firefox", "safari"]
 )
 
-# 发送请求
-response = client.get("https://example.com")
-print(response.text)
+session = pool.get_random()   # 随机获取
+session = pool.get_next()     # 轮询获取
+pool.refresh()                # 刷新池
+```
+
+### 便捷函数
+
+```python
+from tls_fingerprint import http_get, http_post, create_session
+
+# 快速 GET
+response = http_get("https://httpbin.org/ip", browser_type="chrome")
+
+# 快速 POST
+response = http_post("https://httpbin.org/post", body={"key": "value"})
+
+# 快速创建会话
+session = create_session("firefox")
+```
+
+---
+
+## 浏览器指纹预设
+
+### 指纹对比
+
+| 特征 | Chrome 131+ | Firefox 133+ | Safari 17+ | Edge |
+|------|-------------|--------------|------------|------|
+| **密码套件** | 15 个 | 15 个 | 7 个 | 同 Chrome |
+| **签名算法** | 13 个 | 11 个 | 9 个 | 同 Chrome |
+| **命名组** | 5 个 | 5 个 | 4 个 | 同 Chrome |
+| **后量子密钥交换** | X25519MLKEM768 | X25519MLKEM768 | 不支持 | 同 Chrome |
+| **GREASE** | 启用 | 禁用 | 启用 | 同 Chrome |
+| **扩展排列** | 随机排列 | 固定顺序 | 自定义顺序 | 同 Chrome |
+| **ALPS 扩展** | 发送 (0x4469) | 不发送 | 不发送 | 同 Chrome |
+| **delegated_credentials** | 不发送 | 发送 (ext 34) | 不发送 | 不发送 |
+| **record_size_limit** | 不发送 | 发送 (ext 28, 值=16385) | 不发送 | 不发送 |
+| **cert_compression** | Brotli | Brotli | Brotli | Brotli |
+| **ALPN** | h2, http/1.1 | h2, http/1.1 | h2, http/1.1 | h2, http/1.1 |
+
+### Chrome 桌面版 (131+)
+
+```python
+config = BrowserFingerprints.chrome_desktop()
+```
+
+- TLS 引擎: BoringSSL
+- 15 个密码套件 (TLS 1.3 × 3 + TLS 1.2 × 12)
+- 13 个签名算法
+- 5 个命名组: X25519MLKEM768, X25519, P-256, P-384, P-521
+- GREASE 启用，扩展随机排列
+- 发送 ALPS (ext 17513) — Chrome 独有
+- 发送 compress_certificate (ext 27, Brotli)
+
+### Firefox 桌面版 (133+)
+
+```python
+config = BrowserFingerprints.firefox_desktop()
+```
+
+- TLS 引擎: NSS
+- 15 个密码套件
+- 11 个签名算法
+- 5 个命名组: X25519MLKEM768, X25519, P-256, P-384, P-521
+- 不使用 GREASE，不随机排列扩展
+- 发送 delegated_credentials (ext 34) — Firefox 独有
+- 发送 record_size_limit (ext 28, 值=16385) — Firefox 独有
+- 发送 compress_certificate (ext 27, Brotli)
+
+### Safari (17+)
+
+```python
+config = BrowserFingerprints.safari()
+```
+
+- TLS 引擎: Secure Transport
+- 7 个密码套件 (无 CHACHA20-POLY1305 TLS 1.2 套件)
+- 9 个签名算法 (按密钥长度交错排列)
+- 4 个命名组: X25519, P-256, P-384, P-521 (无后量子)
+- GREASE 启用，使用自定义扩展顺序（非随机）
+- 自定义扩展顺序: SNI → groups → ec_point → sigalgs → EMS → renegotiate → ticket → SCT → OCSP → versions → psk_modes → key_share → ALPN → cert_compress
+- 发送 compress_certificate (ext 27, Brotli)
+
+### Edge
+
+```python
+config = BrowserFingerprints.edge()
+```
+
+- 与 Chrome 完全相同（基于 Chromium + BoringSSL）
+
+---
+
+## HTTP/2 指纹
+
+当服务器通过 ALPN 协商到 `h2` 协议时，库会自动使用 HTTP/2 通信，并应用浏览器特定的 HTTP/2 指纹。
+
+### HTTP/2 指纹对比
+
+| 特征 | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| **SETTINGS 数量** | 7 | 5 | 5 | 7 |
+| **HEADER_TABLE_SIZE** | 65536 | 65536 | 默认 | 65536 |
+| **ENABLE_PUSH** | 0 | 不发送 | 0 | 0 |
+| **MAX_CONCURRENT_STREAMS** | 1000 | 100 | 100 | 1000 |
+| **INITIAL_WINDOW_SIZE** | 6291456 | 131072 | 2097152 | 6291456 |
+| **MAX_HEADER_LIST_SIZE** | 262144 | 262144 | 262144 | 262144 |
+| **UNKNOWN_SETTING_8** | 1 | 不发送 | 不发送 | 1 |
+| **WINDOW_UPDATE** | 15663105 | 12517377 | 10485760 | 15663105 |
+| **伪头顺序** | :method, :authority, :scheme, :path | :method, :path, :authority, :scheme | :method, :scheme, :path, :authority | 同 Chrome |
+
+> **伪头顺序**是 Akamai / Cloudflare 等 CDN 用于 HTTP/2 指纹检测的重要特征。本库为每种浏览器实现了正确的伪头顺序。
+
+---
+
+## 自定义指纹配置
+
+### 创建自定义配置
+
+```python
+from tls_fingerprint import TLSFingerprintConfig, TLSFingerprintGenerator
+
+config = TLSFingerprintConfig()
+
+# TLS 版本
+config.version_min = 0x0303  # TLS 1.2
+config.version_max = 0x0304  # TLS 1.3
+
+# 密码套件
+config.cipher_suites = [
+    0x1301,  # TLS_AES_128_GCM_SHA256
+    0x1302,  # TLS_AES_256_GCM_SHA384
+    0x1303,  # TLS_CHACHA20_POLY1305_SHA256
+    0xC02B,  # ECDHE-ECDSA-AES128-GCM-SHA256
+    0xC02F,  # ECDHE-RSA-AES128-GCM-SHA256
+]
+
+# 签名算法
+config.signature_algorithms = [
+    0x0403,  # ECDSA_SECP256R1_SHA256
+    0x0804,  # RSA_PSS_RSAE_SHA256
+    0x0401,  # RSA_PKCS1_SHA256
+]
+
+# 命名组
+config.named_groups = [
+    0x001D,  # x25519
+    0x0017,  # secp256r1
+]
+
+# ALPN
+config.alpn_protocols = ["h2", "http/1.1"]
+
+# 行为
+config.permute_extensions = True
+config.enable_grease = True
+```
+
+### 修改预设配置
+
+```python
+from tls_fingerprint import BrowserFingerprints
+
+# 基于 Chrome 预设修改
+config = BrowserFingerprints.chrome_desktop()
+config.enable_grease = False        # 禁用 GREASE
+config.permute_extensions = False   # 禁用扩展随机排列
+
+# 使用修改后的配置
+client = TLSHttpClient(session=TLSSession(config=config))
+```
+
+---
+
+## 高级用法
+
+### 多账户多指纹
+
+```python
+from tls_fingerprint import TLSHttpClient, TLSSession
+
+accounts = {}
+for user in ["user1", "user2", "user3"]:
+    session = TLSSession(browser_type="random")
+    accounts[user] = TLSHttpClient(session=session)
+    print(f"{user}: {session.browser_type} (session={session.session_id[:8]})")
+
+# 每个账户始终使用相同的 TLS 指纹
+r1 = accounts["user1"].get("https://httpbin.org/ip")
+r2 = accounts["user2"].get("https://httpbin.org/ip")
 ```
 
 ### 动态切换代理
@@ -560,148 +498,33 @@ from tls_fingerprint import TLSHttpClient
 
 client = TLSHttpClient(browser_type="chrome")
 
-# 设置代理
+# 通过代理 1
 client.set_proxy("http://127.0.0.1:8080")
-response1 = client.get("https://httpbin.org/ip")
-
-# 切换代理
-client.set_proxy("socks5://127.0.0.1:1080")
-response2 = client.get("https://httpbin.org/ip")
-
-# 清除代理（直连）
-client.clear_proxy()
-response3 = client.get("https://httpbin.org/ip")
-```
-
-### POST 请求
-
-```python
-from tls_fingerprint import TLSHttpClient
-
-client = TLSHttpClient(browser_type="chrome", proxy="http://127.0.0.1:8080")
-
-# JSON 数据
-import json
-response = client.post(
-    "https://httpbin.org/post",
-    headers={"Content-Type": "application/json"},
-    body=json.dumps({"key": "value"}).encode()
-)
-print(response.json())
-
-# 表单数据
-response = client.post(
-    "https://httpbin.org/post",
-    body={"username": "test", "password": "123456"}
-)
-print(response.json())
-```
-
-### 保持会话一致性
-
-```python
-from tls_fingerprint import TLSHttpClient, TLSSession
-
-# 创建会话
-session = TLSSession(browser_type="random")
-
-# 使用相同会话创建客户端（保持相同指纹）
-client = TLSHttpClient(session=session)
-
-# 所有请求使用相同的 TLS 指纹
 r1 = client.get("https://httpbin.org/ip")
-r2 = client.get("https://httpbin.org/headers")
 
-print(f"Session: {session.session_id}")
-print(f"Browser: {session.browser_type}")
+# 切换到代理 2
+client.set_proxy("socks5://127.0.0.1:1080")
+r2 = client.get("https://httpbin.org/ip")
+
+# 直连
+client.clear_proxy()
+r3 = client.get("https://httpbin.org/ip")
 ```
 
-### ProxyConfig - 代理配置
-
-```python
-from tls_fingerprint import ProxyConfig
-
-# 从 URL 创建
-proxy = ProxyConfig.from_url("http://user:pass@127.0.0.1:8080")
-print(proxy.host)        # 127.0.0.1
-print(proxy.port)        # 8080
-print(proxy.username)    # user
-print(proxy.password)    # pass
-print(proxy.proxy_type)  # http
-
-# 手动创建
-proxy = ProxyConfig(
-    host="127.0.0.1",
-    port=1080,
-    proxy_type="socks5",
-    username="user",
-    password="pass"
-)
-```
-
-### HttpResponse - 响应对象
-
-```python
-response = client.get("https://httpbin.org/get")
-
-# 状态码
-print(response.status_code)  # 200
-
-# 响应头
-print(response.headers)      # {'content-type': 'application/json', ...}
-
-# 响应体（字节）
-print(response.body)         # b'{"args":{}...}'
-
-# 响应体（文本）
-print(response.text)         # '{"args":{}...}'
-
-# 解析 JSON
-data = response.json()
-print(data)                  # {'args': {}, ...}
-
-# HTTP 版本
-print(response.http_version) # HTTP/1.1
-```
-
-### 便捷函数
-
-```python
-from tls_fingerprint import http_get, http_post
-
-# 快速 GET 请求
-response = http_get(
-    "https://httpbin.org/ip",
-    browser_type="chrome",
-    proxy="http://127.0.0.1:8080"
-)
-print(response.text)
-
-# 快速 POST 请求
-response = http_post(
-    "https://httpbin.org/post",
-    browser_type="firefox",
-    body={"key": "value"}
-)
-print(response.json())
-```
-
-### 完整示例：爬虫
+### 爬虫示例
 
 ```python
 from tls_fingerprint import TLSHttpClient
 
-# 创建客户端（模拟 Chrome，使用代理）
 client = TLSHttpClient(
     browser_type="chrome",
-    proxy="http://127.0.0.1:7890",
+    proxy="http://127.0.0.1:7897",
     timeout=10.0,
     default_headers={
         "Referer": "https://www.google.com/",
-    }
+    },
 )
 
-# 请求列表
 urls = [
     "https://httpbin.org/ip",
     "https://httpbin.org/headers",
@@ -716,579 +539,183 @@ for url in urls:
         print(f"{url}: Error - {e}")
 ```
 
+### POST JSON 数据
+
+```python
+import json
+from tls_fingerprint import TLSHttpClient
+
+client = TLSHttpClient(browser_type="chrome")
+
+response = client.post(
+    "https://httpbin.org/post",
+    headers={"Content-Type": "application/json"},
+    body=json.dumps({"key": "value"}).encode()
+)
+print(response.json())
+```
+
+### POST 表单数据
+
+```python
+from tls_fingerprint import TLSHttpClient
+
+client = TLSHttpClient(browser_type="chrome")
+
+# body 传入 dict 自动编码为 application/x-www-form-urlencoded
+response = client.post(
+    "https://httpbin.org/post",
+    body={"username": "test", "password": "123456"}
+)
+print(response.json())
+```
+
 ---
 
-## API 参考
+## 调试与排查
 
-### TLSFingerprintConfig
+### 开启调试模式
 
-TLS 指纹配置类，包含所有 TLS 握手相关的配置参数。
+```python
+client = TLSHttpClient(browser_type="chrome", debug=True)
+response = client.get("https://httpbin.org/get")
+```
 
-#### 属性
+调试日志输出到 stderr，包含：
+- DNS 解析时间
+- TCP 连接时间
+- TLS 握手时间（包括协商的密码套件和 TLS 版本）
+- ALPN 协议协商结果
+- HTTP/2 帧收发（SETTINGS、HEADERS、DATA、WINDOW_UPDATE）
+- 总请求耗时
 
-| 属性 | 类型 | 说明 |
+示例输出：
+```
+[12:00:01] [TLS] === Starting GET request to https://httpbin.org/get ===
+[12:00:01] [TLS] Target: httpbin.org:443, path=/get, https=True
+[12:00:01] [TLS] Resolving DNS for httpbin.org...
+[12:00:01] [TLS] DNS resolved: httpbin.org -> 52.71.170.232 (0.013s)
+[12:00:01] [TLS] Connecting directly to httpbin.org:443...
+[12:00:01] [TLS] Using pre-resolved IP: 52.71.170.232
+[12:00:02] [TLS] Direct connection established in 1.203s
+[12:00:02] [TLS] Negotiated ALPN protocol: h2
+[12:00:02] [TLS] Using HTTP/2 protocol
+[12:00:02] [TLS] Sent HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE
+[12:00:02] [TLS] Sent SETTINGS ACK
+[12:00:02] [TLS] Sent HTTP/2 HEADERS frame
+[12:00:02] [TLS] === Request completed in 1.542s (status: 200) ===
+```
+
+### 常见问题排查
+
+| 问题 | 原因 | 解决 |
 |------|------|------|
-| `version_min` | `int` | 最小 TLS 版本 (0x0303=TLS1.2, 0x0304=TLS1.3) |
-| `version_max` | `int` | 最大 TLS 版本 |
-| `cipher_suites` | `List[int]` | 密码套件列表（按优先级排序） |
-| `signature_algorithms` | `List[int]` | 签名算法列表 |
-| `named_groups` | `List[int]` | 命名组/椭圆曲线列表 |
-| `alpn_protocols` | `List[str]` | ALPN 协议列表 |
-| `permute_extensions` | `bool` | 是否随机排列扩展顺序 |
-| `enable_grease` | `bool` | 是否启用 GREASE 扩展 |
-
-#### 示例
-
-```python
-from tls_fingerprint import TLSFingerprintConfig
-
-# 创建自定义配置
-config = TLSFingerprintConfig()
-config.version_min = 0x0303  # TLS 1.2
-config.version_max = 0x0304  # TLS 1.3
-config.cipher_suites = [0x1301, 0x1302, 0x1303]
-config.signature_algorithms = [0x0403, 0x0804]
-config.named_groups = [0x001D, 0x0017]
-config.alpn_protocols = ["h2", "http/1.1"]
-config.permute_extensions = True
-config.enable_grease = True
-```
+| `ImportError: _tls_fingerprint` | C++ 扩展未编译 | `cd python && python setup.py build_ext --inplace` |
+| `ImportError: hpack` | 缺少依赖 | `pip install hpack` |
+| 请求超时 | 网络问题或代理不可用 | 检查代理配置，尝试直连 |
+| SSL handshake failed | 服务器不支持配置的密码套件 | 换用其他浏览器指纹 |
+| 9 秒+延迟 | DNS 解析问题（旧版本） | 更新到最新版本（已修复） |
 
 ---
 
-### TLSFingerprintGenerator
+## 架构说明
 
-TLS 指纹生成器，用于生成 ClientHello 数据。
+### 双层架构
 
-#### 方法
-
-| 方法 | 参数 | 返回值 | 说明 |
-|------|------|--------|------|
-| `set_config(config)` | `TLSFingerprintConfig` | `None` | 设置指纹配置 |
-| `get_config()` | - | `TLSFingerprintConfig` | 获取当前配置 |
-| `generate_client_hello(hostname)` | `str` | `bytes` | 生成 ClientHello 数据 |
-
-#### 示例
-
-```python
-from tls_fingerprint import TLSFingerprintGenerator, BrowserFingerprints
-
-# 创建生成器
-generator = TLSFingerprintGenerator()
-
-# 设置 Chrome 指纹
-config = BrowserFingerprints.chrome_desktop()
-generator.set_config(config)
-
-# 为指定主机名生成 ClientHello
-client_hello = generator.generate_client_hello("www.google.com")
-
-# 输出信息
-print(f"生成的 ClientHello 大小: {len(client_hello)} 字节")
+```
+Python 层                          C++ 层 (pybind11)
+─────────────────────            ──────────────────────────
+TLSHttpClient                    BoringSSLSocket
+├── DNS 解析 (IPv4)              ├── TCP 连接 (使用预解析 IP)
+├── HTTP/2 指纹帧构造              ├── TLS 握手 (BoringSSL)
+├── 请求/响应处理                  │   ├── 浏览器指纹配置
+├── 代理协商                      │   ├── GREASE / 扩展排列
+└── gzip/brotli 解压              │   ├── ALPS / ECH / SCT
+                                 │   └── 自定义扩展顺序
+                                 └── SSL 读写
 ```
 
----
+### 源码同步
 
-### BrowserFingerprints
+项目维护两套 C++ 源码，必须保持同步：
 
-浏览器指纹预设工厂类，提供常见浏览器的 TLS 指纹配置。
-
-#### 静态方法
-
-| 方法 | 说明 |
+| 路径 | 用途 |
 |------|------|
-| `chrome_desktop()` | Chrome 桌面版指纹 |
-| `chrome_android()` | Chrome Android 指纹 |
-| `firefox_desktop()` | Firefox 桌面版指纹 |
-| `safari()` | Safari 指纹 |
-| `edge()` | Edge 指纹（与 Chrome 相同） |
-
-#### 示例
-
-```python
-from tls_fingerprint import BrowserFingerprints
-
-# 获取各种浏览器指纹
-chrome = BrowserFingerprints.chrome_desktop()
-firefox = BrowserFingerprints.firefox_desktop()
-safari = BrowserFingerprints.safari()
-edge = BrowserFingerprints.edge()
-
-# 比较密码套件数量
-print(f"Chrome 密码套件: {len(chrome.cipher_suites)}")
-print(f"Firefox 密码套件: {len(firefox.cipher_suites)}")
-print(f"Safari 密码套件: {len(safari.cipher_suites)}")
-```
-
----
-
-### TLSFingerprintAnalyzer
-
-TLS 指纹分析器，用于识别浏览器类型。
-
-#### 静态方法
-
-| 方法 | 参数 | 返回值 | 说明 |
-|------|------|--------|------|
-| `identify_browser(config)` | `TLSFingerprintConfig` | `str` | 根据配置识别浏览器类型 |
-
-#### 示例
-
-```python
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintAnalyzer
-
-# 获取 Chrome 指纹
-config = BrowserFingerprints.chrome_desktop()
-
-# 识别浏览器
-browser = TLSFingerprintAnalyzer.identify_browser(config)
-print(f"识别结果: {browser}")  # 输出: Chrome
-```
-
----
-
-### 工具函数
-
-#### get_cipher_suite_name(cipher_suite: int) -> str
-
-获取密码套件的可读名称。
-
-```python
-from tls_fingerprint import get_cipher_suite_name, TLS_AES_128_GCM_SHA256
-
-name = get_cipher_suite_name(TLS_AES_128_GCM_SHA256)
-print(name)  # 输出: TLS_AES_128_GCM_SHA256
-```
-
-#### get_cipher_suite_version(cipher_suite: int) -> str
-
-获取密码套件对应的 TLS 版本。
-
-```python
-from tls_fingerprint import get_cipher_suite_version, TLS_AES_128_GCM_SHA256
-
-version = get_cipher_suite_version(TLS_AES_128_GCM_SHA256)
-print(version)  # 输出: TLS 1.3
-```
-
-#### get_signature_algorithm_name(sig_alg: int) -> str
-
-获取签名算法的可读名称。
-
-```python
-from tls_fingerprint import get_signature_algorithm_name, ECDSA_SECP256R1_SHA256
-
-name = get_signature_algorithm_name(ECDSA_SECP256R1_SHA256)
-print(name)  # 输出: ECDSA_SECP256R1_SHA256
-```
-
-#### get_named_group_name(named_group: int) -> str
-
-获取命名组的可读名称。
-
-```python
-from tls_fingerprint import get_named_group_name, X25519
-
-name = get_named_group_name(X25519)
-print(name)  # 输出: x25519
-```
-
----
-
-## 浏览器指纹预设
-
-### Chrome 桌面版
-
-```python
-config = BrowserFingerprints.chrome_desktop()
-```
-
-特点：
-- 支持 TLS 1.2 和 TLS 1.3
-- 9 个密码套件
-- 8 个签名算法
-- 3 个命名组 (x25519, secp256r1, secp384r1)
-- 启用 GREASE 扩展
-- 启用扩展随机排列
-- ALPN: h2, http/1.1
-
-### Firefox 桌面版
-
-```python
-config = BrowserFingerprints.firefox_desktop()
-```
-
-特点：
-- 支持 TLS 1.2 和 TLS 1.3
-- 9 个密码套件
-- 7 个签名算法
-- 不使用 GREASE
-- 不随机排列扩展
-
-### Safari
-
-```python
-config = BrowserFingerprints.safari()
-```
-
-特点：
-- 支持 TLS 1.2 和 TLS 1.3
-- 6 个密码套件
-- 9 个签名算法
-- 4 个命名组（支持 secp521r1）
-- 不使用 GREASE
-
----
-
-## 自定义指纹配置
-
-### 创建自定义配置
-
-```python
-from tls_fingerprint import TLSFingerprintConfig, TLSFingerprintGenerator
-
-# 创建自定义配置
-config = TLSFingerprintConfig()
-
-# 设置 TLS 版本范围
-config.version_min = 0x0303  # TLS 1.2
-config.version_max = 0x0304  # TLS 1.3
-
-# 设置密码套件（TLS 1.3）
-config.cipher_suites = [
-    0x1301,  # TLS_AES_128_GCM_SHA256
-    0x1302,  # TLS_AES_256_GCM_SHA384
-    0x1303,  # TLS_CHACHA20_POLY1305_SHA256
-]
-
-# 设置签名算法
-config.signature_algorithms = [
-    0x0403,  # ECDSA_SECP256R1_SHA256
-    0x0804,  # RSA_PSS_RSAE_SHA256
-    0x0401,  # RSA_PKCS1_SHA256
-]
-
-# 设置命名组
-config.named_groups = [
-    0x001D,  # x25519
-    0x0017,  # secp256r1
-]
-
-# 设置 ALPN 协议
-config.alpn_protocols = ["h2", "http/1.1"]
-
-# 高级设置
-config.permute_extensions = True  # 随机排列扩展
-config.enable_grease = False      # 禁用 GREASE
-
-# 使用自定义配置
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-client_hello = generator.generate_client_hello("example.com")
-```
-
-### 修改预设配置
-
-```python
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-
-# 从 Chrome 预设开始
-config = BrowserFingerprints.chrome_desktop()
-
-# 只修改密码套件（仅使用 TLS 1.3）
-config.cipher_suites = [
-    0x1301,  # TLS_AES_128_GCM_SHA256
-    0x1302,  # TLS_AES_256_GCM_SHA384
-    0x1303,  # TLS_CHACHA20_POLY1305_SHA256
-]
-
-# 禁用 GREASE 使其更像普通客户端
-config.enable_grease = False
-
-# 使用修改后的配置
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-```
-
----
-
-## 高级用法
-
-### 比较不同浏览器指纹
-
-```python
-from tls_fingerprint import BrowserFingerprints
-
-browsers = {
-    "Chrome": BrowserFingerprints.chrome_desktop(),
-    "Firefox": BrowserFingerprints.firefox_desktop(),
-    "Safari": BrowserFingerprints.safari(),
-    "Edge": BrowserFingerprints.edge(),
-}
-
-print("浏览器指纹比较:")
-print("-" * 60)
-print(f"{'浏览器':<12} {'密码套件':>10} {'签名算法':>10} {'命名组':>10}")
-print("-" * 60)
-
-for name, config in browsers.items():
-    print(f"{name:<12} {len(config.cipher_suites):>10} "
-          f"{len(config.signature_algorithms):>10} "
-          f"{len(config.named_groups):>10}")
-```
-
-输出：
-```
-浏览器指纹比较:
-------------------------------------------------------------
-浏览器         密码套件     签名算法      命名组
-------------------------------------------------------------
-Chrome               9          8          3
-Firefox              9          7          3
-Safari               6          9          4
-Edge                 9          8          3
-```
-
-### 批量生成 ClientHello
-
-```python
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-
-# 配置生成器
-config = BrowserFingerprints.chrome_desktop()
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-
-# 批量生成
-hosts = ["google.com", "github.com", "stackoverflow.com", "reddit.com"]
-
-for host in hosts:
-    client_hello = generator.generate_client_hello(host)
-    print(f"{host}: {len(client_hello)} bytes")
-```
-
-### 与 requests 库集成
-
-```python
-import requests
-from tls_fingerprint import BrowserFingerprints
-
-# 获取 Chrome 指纹配置
-config = BrowserFingerprints.chrome_desktop()
-
-# 打印指纹信息（用于调试）
-print("使用 Chrome 指纹:")
-print(f"  密码套件数量: {len(config.cipher_suites)}")
-print(f"  ALPN 协议: {config.alpn_protocols}")
-
-# 注意：实际 TLS 指纹应用需要配合底层 SSL 库
-# 这里仅演示配置获取
-```
-
----
-
-## 完整示例
-
-### 示例 1: 生成并分析 ClientHello
-
-```python
-from tls_fingerprint import (
-    BrowserFingerprints,
-    TLSFingerprintGenerator,
-    TLSFingerprintAnalyzer,
-    get_cipher_suite_name,
-)
-
-# 生成 ClientHello
-config = BrowserFingerprints.chrome_desktop()
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-
-hostname = "www.example.com"
-client_hello = generator.generate_client_hello(hostname)
-
-print(f"ClientHello 生成完成")
-print(f"  目标主机: {hostname}")
-print(f"  数据大小: {len(client_hello)} 字节")
-print(f"  前 32 字节: {client_hello[:32].hex()}")
-
-# 识别浏览器
-browser = TLSFingerprintAnalyzer.identify_browser(config)
-print(f"  浏览器识别: {browser}")
-
-# 打印密码套件
-print(f"\n密码套件列表:")
-for i, cs in enumerate(config.cipher_suites, 1):
-    name = get_cipher_suite_name(cs)
-    print(f"  {i}. {name} (0x{cs:04X})")
-```
-
-### 示例 2: 多浏览器轮换
-
-```python
-import random
-from tls_fingerprint import BrowserFingerprints, TLSFingerprintGenerator
-
-# 获取所有浏览器指纹
-fingerprints = [
-    ("Chrome", BrowserFingerprints.chrome_desktop()),
-    ("Firefox", BrowserFingerprints.firefox_desktop()),
-    ("Safari", BrowserFingerprints.safari()),
-    ("Edge", BrowserFingerprints.edge()),
-]
-
-generator = TLSFingerprintGenerator()
-
-# 模拟随机轮换浏览器指纹
-hosts = ["api.example.com", "www.example.com", "cdn.example.com"]
-
-for host in hosts:
-    # 随机选择一个浏览器指纹
-    browser_name, config = random.choice(fingerprints)
-
-    generator.set_config(config)
-    client_hello = generator.generate_client_hello(host)
-
-    print(f"主机: {host}")
-    print(f"  使用指纹: {browser_name}")
-    print(f"  ClientHello 大小: {len(client_hello)} bytes")
-    print()
-```
-
-### 示例 3: TLS 1.3 Only 配置
-
-```python
-from tls_fingerprint import TLSFingerprintConfig, TLSFingerprintGenerator
-
-# 创建仅支持 TLS 1.3 的配置
-config = TLSFingerprintConfig()
-config.version_min = 0x0304  # TLS 1.3
-config.version_max = 0x0304  # TLS 1.3
-
-# 仅使用 TLS 1.3 密码套件
-config.cipher_suites = [
-    0x1301,  # TLS_AES_128_GCM_SHA256
-    0x1302,  # TLS_AES_256_GCM_SHA384
-    0x1303,  # TLS_CHACHA20_POLY1305_SHA256
-]
-
-# TLS 1.3 签名算法
-config.signature_algorithms = [
-    0x0403,  # ECDSA_SECP256R1_SHA256
-    0x0804,  # RSA_PSS_RSAE_SHA256
-    0x0805,  # RSA_PSS_RSAE_SHA384
-    0x0806,  # RSA_PSS_RSAE_SHA512
-]
-
-# 现代命名组
-config.named_groups = [
-    0x001D,  # x25519
-]
-
-# ALPN
-config.alpn_protocols = ["h2"]
-
-# 不使用 GREASE 和扩展随机化
-config.enable_grease = False
-config.permute_extensions = False
-
-# 生成
-generator = TLSFingerprintGenerator()
-generator.set_config(config)
-client_hello = generator.generate_client_hello("modern.example.com")
-
-print(f"TLS 1.3 Only ClientHello: {len(client_hello)} bytes")
-```
-
----
-
-## 常见问题
-
-### Q: 如何查看支持的密码套件常量？
-
-```python
-from tls_fingerprint import (
-    TLS_AES_128_GCM_SHA256,
-    TLS_AES_256_GCM_SHA384,
-    TLS_CHACHA20_POLY1305_SHA256,
-    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-)
-
-print(f"TLS_AES_128_GCM_SHA256 = 0x{TLS_AES_128_GCM_SHA256:04X}")
-print(f"TLS_AES_256_GCM_SHA384 = 0x{TLS_AES_256_GCM_SHA384:04X}")
-```
-
-### Q: 生成的 ClientHello 可以直接用于网络请求吗？
-
-生成的 ClientHello 是原始字节数据，需要配合底层 SSL/TLS 库（如 BoringSSL、OpenSSL）才能用于实际的网络连接。本库主要用于：
-
-1. 生成指纹配置
-2. 分析 TLS 指纹
-3. 模拟浏览器 TLS 特征
-
-### Q: 如何禁用 GREASE 扩展？
-
-```python
-config = BrowserFingerprints.chrome_desktop()
-config.enable_grease = False  # 禁用 GREASE
-```
-
-### Q: 为什么 Firefox 和 Chrome 的指纹不同？
-
-不同浏览器有不同的 TLS 实现：
-
-- **Chrome**: 使用 BoringSSL，支持 GREASE
-- **Firefox**: 使用 NSS，不支持 GREASE
-- **Safari**: 使用 Secure Transport，有不同的默认配置
-
-### Q: 如何验证指纹是否正确？
-
-可以使用 Wireshark 抓包或在线 TLS 指纹分析工具来验证生成的 ClientHello 是否符合预期。
+| `src/boringssl_socket.cc` | 独立 C++ 库 |
+| `python/src/boringssl_socket.cc` | Python 扩展 |
+| `include/tls_fingerprint/` | 独立库头文件 |
+| `python/include/tls_fingerprint/` | Python 扩展头文件 |
+
+### BoringSSL 补丁
+
+本库对 BoringSSL 源码进行了以下补丁：
+
+| 补丁 | 文件 | 说明 |
+|------|------|------|
+| record_size_limit 扩展 | `ssl/extensions.cc`, `ssl/internal.h`, `ssl/ssl_lib.cc` | 添加 ext 28 支持 (RFC 8449) |
+| 自定义扩展顺序 | `ssl/extensions.cc`, `ssl/internal.h`, `ssl/ssl_lib.cc` | `SSL_set_extension_order()` API |
+| X25519MLKEM768 | BoringSSL 已内置 | 后量子混合密钥交换 (group 4588) |
 
 ---
 
 ## 常量参考
 
-### 密码套件常量
+### 密码套件
 
-| 常量 | 值 | 说明 |
+| 值 | 名称 | TLS 版本 |
 |------|------|------|
-| `TLS_AES_128_GCM_SHA256` | 0x1301 | TLS 1.3 |
-| `TLS_AES_256_GCM_SHA384` | 0x1302 | TLS 1.3 |
-| `TLS_CHACHA20_POLY1305_SHA256` | 0x1303 | TLS 1.3 |
-| `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256` | 0xC02B | TLS 1.2 |
-| `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` | 0xC02F | TLS 1.2 |
-| `TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384` | 0xC02C | TLS 1.2 |
-| `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` | 0xC030 | TLS 1.2 |
-| `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256` | 0xCCA9 | TLS 1.2 |
-| `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256` | 0xCCA8 | TLS 1.2 |
+| 0x1301 | TLS_AES_128_GCM_SHA256 | 1.3 |
+| 0x1302 | TLS_AES_256_GCM_SHA384 | 1.3 |
+| 0x1303 | TLS_CHACHA20_POLY1305_SHA256 | 1.3 |
+| 0xC02B | ECDHE-ECDSA-AES128-GCM-SHA256 | 1.2 |
+| 0xC02F | ECDHE-RSA-AES128-GCM-SHA256 | 1.2 |
+| 0xC02C | ECDHE-ECDSA-AES256-GCM-SHA384 | 1.2 |
+| 0xC030 | ECDHE-RSA-AES256-GCM-SHA384 | 1.2 |
+| 0xCCA9 | ECDHE-ECDSA-CHACHA20-POLY1305 | 1.2 |
+| 0xCCA8 | ECDHE-RSA-CHACHA20-POLY1305 | 1.2 |
+| 0xC013 | ECDHE-RSA-AES128-SHA | 1.2 |
+| 0xC014 | ECDHE-RSA-AES256-SHA | 1.2 |
+| 0x009C | AES128-GCM-SHA256 | 1.2 |
+| 0x009D | AES256-GCM-SHA384 | 1.2 |
+| 0x002F | AES128-SHA | 1.2 |
+| 0x0035 | AES256-SHA | 1.2 |
 
-### 签名算法常量
+### 签名算法
 
-| 常量 | 值 | 说明 |
+| 值 | 名称 |
+|------|------|
+| 0x0403 | ECDSA_SECP256R1_SHA256 |
+| 0x0804 | RSA_PSS_RSAE_SHA256 |
+| 0x0401 | RSA_PKCS1_SHA256 |
+| 0x0503 | ECDSA_SECP384R1_SHA384 |
+| 0x0805 | RSA_PSS_RSAE_SHA384 |
+| 0x0501 | RSA_PKCS1_SHA384 |
+| 0x0806 | RSA_PSS_RSAE_SHA512 |
+| 0x0601 | RSA_PKCS1_SHA512 |
+| 0x0201 | RSA_PKCS1_SHA1 |
+
+### 命名组
+
+| 值 | 名称 | 说明 |
 |------|------|------|
-| `ECDSA_SECP256R1_SHA256` | 0x0403 | ECDSA with SHA-256 |
-| `RSA_PSS_RSAE_SHA256` | 0x0804 | RSA-PSS with SHA-256 |
-| `RSA_PKCS1_SHA256` | 0x0401 | RSA-PKCS1 with SHA-256 |
-| `ECDSA_SECP384R1_SHA384` | 0x0503 | ECDSA with SHA-384 |
-| `RSA_PSS_RSAE_SHA384` | 0x0805 | RSA-PSS with SHA-384 |
-| `RSA_PSS_RSAE_SHA512` | 0x0806 | RSA-PSS with SHA-512 |
-
-### 命名组常量
-
-| 常量 | 值 | 说明 |
-|------|------|------|
-| `X25519` | 0x001D | Curve25519 |
-| `SECP256R1` | 0x0017 | NIST P-256 |
-| `SECP384R1` | 0x0018 | NIST P-384 |
-| `SECP521R1` | 0x0019 | NIST P-521 |
+| 0x11EC (4588) | X25519MLKEM768 | 后量子混合密钥交换 |
+| 0x001D | X25519 | Curve25519 |
+| 0x0017 | secp256r1 | NIST P-256 |
+| 0x0018 | secp384r1 | NIST P-384 |
+| 0x0019 | secp521r1 | NIST P-521 |
 
 ---
 
 ## 版本历史
 
 - **1.0.0** - 初始版本
-  - 支持 Chrome、Firefox、Safari、Edge 指纹
-  - ClientHello 生成
-  - 浏览器识别
+  - 支持 Chrome 131+、Firefox 133+、Safari 17+、Edge 指纹
+  - BoringSSL C++ 扩展 (pybind11)
+  - HTTP/1.1 和 HTTP/2 协议支持
+  - HTTP/2 浏览器指纹 (SETTINGS/WINDOW_UPDATE/伪头顺序)
+  - TLS 扩展: GREASE, ALPS, delegated_credentials, record_size_limit, compress_certificate, 自定义扩展顺序
+  - 后量子密钥交换: X25519MLKEM768
+  - HTTP/HTTPS/SOCKS5 代理支持
+  - DNS 预解析优化（避免 C++ 层重复解析）
+  - IPv4 优先 DNS 解析（避免 IPv6 AAAA 查询延迟）
+  - 调试日志模式

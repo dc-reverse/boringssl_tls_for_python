@@ -100,6 +100,22 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Detect Python: prefer venv, then system python3
+if [ -f "$SCRIPT_DIR/.venv/bin/python3" ]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+    PIP="$SCRIPT_DIR/.venv/bin/pip"
+elif [ -f "$SCRIPT_DIR/python/.venv/bin/python3" ]; then
+    PYTHON="$SCRIPT_DIR/python/.venv/bin/python3"
+    PIP="$SCRIPT_DIR/python/.venv/bin/pip"
+elif command -v python3 &> /dev/null; then
+    PYTHON="python3"
+    PIP="pip3"
+else
+    echo -e "${RED}Python3 not found${NC}"
+    exit 1
+fi
+echo -e "${YELLOW}Using Python: $PYTHON${NC}"
+
 # cibuildwheel mode
 if [ "$USE_CIBUILDWHEEL" = true ]; then
     echo -e "${BLUE}========================================${NC}"
@@ -173,7 +189,8 @@ if [ "$WHEEL_ONLY" = false ]; then
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DBUILD_PYTHON_BINDINGS=ON \
         -DBUILD_TESTS=$( [ "$RUN_TESTS" = true ] && echo "ON" || echo "OFF" ) \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DPython3_EXECUTABLE="$PYTHON"
 
     echo -e "${GREEN}CMake configuration complete.${NC}"
     echo ""
@@ -197,7 +214,7 @@ cd "$SCRIPT_DIR/python"
 rm -rf dist/ build/ *.egg-info tls_fingerprint/*.egg-info
 
 # Build wheel
-python3 setup.py bdist_wheel 2>/dev/null || {
+$PYTHON setup.py bdist_wheel 2>/dev/null || {
     echo -e "${RED}Failed to build wheel package${NC}"
     exit 1
 }
@@ -233,8 +250,8 @@ if [ "$RUN_TESTS" = true ]; then
     # Run Python tests
     cd "$SCRIPT_DIR"
     if [ -d "tests/python" ]; then
-        pip3 install --quiet pytest
-        python3 -m pytest tests/python/ -v || {
+        $PIP install --quiet pytest
+        $PYTHON -m pytest tests/python/ -v || {
             echo -e "${RED}Python tests failed${NC}"
             exit 1
         }
@@ -251,7 +268,7 @@ if [ "$INSTALL" = true ]; then
     echo -e "${YELLOW}Step $STEP_NUM: Installing Python package...${NC}"
     cd "$SCRIPT_DIR/python"
 
-    pip3 install dist/*.whl --force-reinstall || {
+    $PIP install dist/*.whl --force-reinstall || {
         echo -e "${RED}Failed to install Python package${NC}"
         exit 1
     }
@@ -261,7 +278,7 @@ if [ "$INSTALL" = true ]; then
 
     # Verify installation
     echo -e "${YELLOW}Verifying installation...${NC}"
-    python3 -c "import tls_fingerprint; print(f'tls_fingerprint version: {tls_fingerprint.__version__}')" || {
+    $PYTHON -c "import tls_fingerprint; print(f'tls_fingerprint version: {tls_fingerprint.__version__}')" || {
         echo -e "${RED}Verification failed${NC}"
         exit 1
     }

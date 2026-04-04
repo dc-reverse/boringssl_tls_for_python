@@ -135,6 +135,9 @@ PYBIND11_MODULE(_tls_fingerprint, m) {
         .def("set_config", &tls_fingerprint::BoringSSLSocket::SetConfig,
              py::arg("config"),
              "Set the TLS fingerprint configuration")
+        .def("set_resolved_ip", &tls_fingerprint::BoringSSLSocket::SetResolvedIP,
+             py::arg("ip"),
+             "Set pre-resolved IP address to skip DNS resolution in connect()")
         .def("connect", &tls_fingerprint::BoringSSLSocket::Connect,
              py::arg("host"),
              py::arg("port"),

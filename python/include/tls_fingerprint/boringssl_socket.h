@@ -40,6 +40,10 @@ public:
     // Set TLS fingerprint configuration
     void SetConfig(const TLSFingerprintConfig& config);
 
+    // Set pre-resolved IP address to skip DNS in Connect()
+    // The host parameter in Connect() will still be used for TLS SNI
+    void SetResolvedIP(const std::string& ip);
+
     // Connect to host:port directly
     // Returns 0 on success, negative on error
     int Connect(const std::string& host, int port, int timeout_ms = 30000);
