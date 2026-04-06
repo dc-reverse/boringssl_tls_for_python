@@ -502,23 +502,36 @@ class TLSHttpClient:
                           headers: Optional[Dict[str, str]] = None,
                           body: Optional[bytes] = None) -> HttpResponse:
         """Send HTTP/2 request with proper fingerprinting frames."""
-        try:
-            import hpack
-            encoder = hpack.Encoder()
-            use_hpack = True
-        except ImportError:
-            use_hpack = False
-
         browser_type = self._session.browser_type
         h2_config = HTTP2BrowserFingerprints.get_fingerprint(browser_type)
         frame_builder = HTTP2FrameBuilder(h2_config)
 
-        # 1. Send HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE together
+        # Server's SETTINGS will be stored here
+        server_settings = {}
+
+        # 1. Send HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE (if needed)
         preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
         settings_frame = frame_builder.build_settings_frame()
-        window_update = frame_builder.build_window_update_frame(stream_id=0)
-        sock.send(preface + settings_frame + window_update)
-        self._log("Sent HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE")
+
+        frames_to_send = preface + settings_frame
+
+        # Add WINDOW_UPDATE if increment > 0
+        if h2_config.window_update_increment > 0:
+            window_update = frame_builder.build_window_update_frame(stream_id=0)
+            frames_to_send += window_update
+            self._log(f"Added WINDOW_UPDATE frame (increment={h2_config.window_update_increment})")
+
+        # Build PRIORITY frame if enabled
+        if h2_config.enable_priority:
+            priority_frame = frame_builder.build_priority_frame(
+                stream_id=h2_config.priority_stream_id,
+                weight=h2_config.priority_weight,
+            )
+            frames_to_send += priority_frame
+            self._log(f"Added PRIORITY frame (stream={h2_config.priority_stream_id}, weight={h2_config.priority_weight})")
+
+        sock.send(frames_to_send)
+        self._log("Sent HTTP/2 connection preface + SETTINGS + WINDOW_UPDATE + PRIORITY")
 
         # 2. Read server's initial frames, process SETTINGS and keep leftover
         leftover = b""
@@ -527,7 +540,26 @@ class TLSHttpClient:
         try:
             server_data = sock.recv(16384)
             if server_data:
-                self._log(f"Received server initial data ({len(server_data)} bytes)")
+                self._log(f"Received server initial data ({len(server_data)} bytes): {server_data.hex()}")
+                # Parse and log server's SETTINGS
+                pos = 0
+                while pos + 9 <= len(server_data):
+                    frame_len = int.from_bytes(server_data[pos:pos+3], 'big')
+                    frame_type = server_data[pos+3]
+                    frame_flags = server_data[pos+4]
+                    total = 9 + frame_len
+                    if pos + total > len(server_data):
+                        break
+                    if frame_type == 0x04 and not (frame_flags & 0x01):
+                        # Parse server SETTINGS and save them
+                        payload = server_data[pos+9:pos+total]
+                        for i in range(0, len(payload), 6):
+                            if i + 6 <= len(payload):
+                                sid = int.from_bytes(payload[i:i+2], 'big')
+                                sval = int.from_bytes(payload[i+2:i+6], 'big')
+                                server_settings[sid] = sval
+                        self._log(f"Server SETTINGS: {server_settings}")
+                    pos += total
                 # Parse frames: ACK any SETTINGS, keep unprocessed data
                 pos = 0
                 while pos + 9 <= len(server_data):
@@ -558,10 +590,77 @@ class TLSHttpClient:
         except Exception:
             pass
 
+        # 2.5 Wait for server's SETTINGS ACK (required by some servers)
+        settings_ack_received = False
+        max_wait = 5  # Max 5 seconds
+        wait_start = _time.time()
+        while not settings_ack_received and (_time.time() - wait_start) < max_wait:
+            try:
+                sock.setblocking(False)
+                try:
+                    more_data = sock.recv(4096)
+                    if more_data:
+                        self._log(f"Received additional data ({len(more_data)} bytes): {more_data.hex()}")
+                        # Parse all frames in the data
+                        pos = 0
+                        while pos + 9 <= len(more_data):
+                            frame_len = int.from_bytes(more_data[pos:pos+3], 'big')
+                            frame_type = more_data[pos+3]
+                            frame_flags = more_data[pos+4]
+                            total = 9 + frame_len
+                            if pos + total > len(more_data):
+                                break
+                            if frame_type == 0x04 and (frame_flags & 0x01):
+                                self._log("Received SETTINGS ACK from server")
+                                settings_ack_received = True
+                            elif frame_type == 0x04 and not (frame_flags & 0x01):
+                                # Another SETTINGS frame - send ACK
+                                sock.send(b'\x00\x00\x00\x04\x01\x00\x00\x00\x00')
+                                self._log("Sent SETTINGS ACK for additional SETTINGS frame")
+                            pos += total
+                        leftover += more_data
+                        if settings_ack_received:
+                            break
+                except BlockingIOError:
+                    _time.sleep(0.05)
+                finally:
+                    sock.setblocking(True)
+            except Exception:
+                break
+
+        if settings_ack_received:
+            self._log("Server SETTINGS ACK received, proceeding with request")
+        else:
+            self._log("No SETTINGS ACK received, proceeding anyway")
+
         # 3. Build headers for the request
+        # Create HPACK encoder with server's header table size
+        try:
+            import hpack
+            encoder = hpack.Encoder()
+            # Set the dynamic table size to match server's SETTINGS
+            # Setting 0x01 is HEADER_TABLE_SIZE, default 4096
+            header_table_size = server_settings.get(0x01, 4096)
+            encoder.header_table_size = header_table_size
+            self._log(f"HPACK encoder table size set to {header_table_size}")
+            use_hpack = True
+        except ImportError:
+            use_hpack = False
+
         req_headers = self._get_default_headers(host, True)
         if headers:
-            req_headers.update(headers)
+            # Merge headers with case-insensitive deduplication
+            for k, v in headers.items():
+                # Check if key already exists (case-insensitive)
+                existing_key = None
+                for existing in req_headers.keys():
+                    if existing.lower() == k.lower():
+                        existing_key = existing
+                        break
+                if existing_key:
+                    req_headers[existing_key] = v  # Overwrite existing
+                else:
+                    req_headers[k] = v  # Add new
 
         # Build pseudo-headers + regular headers
         # Use browser-specific pseudo-header order from h2_config
@@ -577,12 +676,31 @@ class TLSHttpClient:
             for ph in h2_config.pseudo_header_order:
                 if ph in pseudo_values:
                     headers_list.append((ph, pseudo_values[ph]))
-            for k, v in req_headers.items():
-                if k.lower() in ("host", "connection", "transfer-encoding"):
-                    continue
-                headers_list.append((k.lower(), v))
 
+            # Add regular headers in browser-specific order
+            added_headers = set()
+            for hname in h2_config.header_order:
+                # Case-insensitive match
+                for k, v in req_headers.items():
+                    if k.lower() == hname.lower():
+                        headers_list.append((k.lower(), v))
+                        added_headers.add(k.lower())
+                        break
+
+            # Add remaining headers not in the order list (sorted for consistency)
+            for k, v in sorted(req_headers.items(), key=lambda x: x[0].lower()):
+                if k.lower() not in added_headers and k.lower() not in ("host", "connection", "transfer-encoding"):
+                    headers_list.append((k.lower(), v))
+
+            # Debug: check for duplicate header names
+            header_names = [h[0] for h in headers_list]
+            if len(header_names) != len(set(header_names)):
+                from collections import Counter
+                dupes = [h for h, count in Counter(header_names).items() if count > 1]
+                self._log(f"WARNING: Duplicate headers detected: {dupes}")
+            self._log(f"H2 headers ({len(headers_list)}): {[h[0] for h in headers_list]}")
             encoded = encoder.encode(headers_list)
+            self._log(f"HEADERS frame payload ({len(encoded)} bytes): {encoded.hex()[:200]}...")
         else:
             all_headers = dict(pseudo_values)
             for k, v in req_headers.items():
@@ -602,11 +720,18 @@ class TLSHttpClient:
 
         # 5. Send DATA frame if body exists
         if body:
+            self._log(f"Sending DATA frame with {len(body)} bytes")
             data_frame = self._build_h2_data_frame(body, stream_id=1, end_stream=True)
             sock.send(data_frame)
+            self._log("Sent HTTP/2 DATA frame")
+        else:
+            self._log("No body to send (body is empty or None)")
 
         # 6. Read response frames (pass leftover as pre-read data)
-        return self._read_h2_response(sock, initial_buf=leftover)
+        # Pass the client's HEADER_TABLE_SIZE for the decoder's max_allowed_table_size
+        # The decoder must accept table size updates up to what we advertised
+        client_header_table_size = h2_config.get_settings_dict().get(0x01, 4096)
+        return self._read_h2_response(sock, initial_buf=leftover, max_table_size=client_header_table_size)
 
     def _build_h2_data_frame(self, data: bytes, stream_id: int, end_stream: bool) -> bytes:
         """Build HTTP/2 DATA frame."""
@@ -617,11 +742,15 @@ class TLSHttpClient:
         header += stream_id.to_bytes(4, 'big')
         return header + data
 
-    def _read_h2_response(self, sock, initial_buf: bytes = b"") -> HttpResponse:
+    def _read_h2_response(self, sock, initial_buf: bytes = b"", max_table_size: int = 65536) -> HttpResponse:
         """Read and parse HTTP/2 response frames."""
         try:
             import hpack
             decoder = hpack.Decoder()
+            # Set max table size to what client advertised in SETTINGS (0x01 = HEADER_TABLE_SIZE)
+            # Server may send dynamic table size updates up to this value
+            decoder.max_allowed_table_size = max_table_size
+            self._log(f"HPACK decoder max table size set to {max_table_size}")
         except ImportError:
             decoder = None
 
@@ -636,7 +765,7 @@ class TLSHttpClient:
         import time as _time
         read_deadline = _time.time() + 30  # 30s total read timeout
 
-        for _ in range(max_reads):
+        for read_count in range(max_reads):
             if stream_ended:
                 break
 
@@ -680,11 +809,13 @@ class TLSHttpClient:
                         self._log("Sent SETTINGS ACK")
 
                 elif frame_type == 0x01 and frame_stream_id == 1:  # HEADERS on our stream
+                    self._log(f"Received HEADERS frame on stream {frame_stream_id}")
                     if decoder:
                         try:
                             decoded = decoder.decode(frame_payload)
                             for name, value in decoded:
                                 response_headers[name] = value
+                            self._log(f"Decoded headers: {list(response_headers.keys())}")
                         except Exception as e:
                             self._log(f"HPACK decode error: {e}")
                     else:
@@ -699,6 +830,7 @@ class TLSHttpClient:
 
                 elif frame_type == 0x00 and frame_stream_id == 1:  # DATA on our stream
                     response_body += frame_payload
+                    self._log(f"Received DATA frame: {len(frame_payload)} bytes")
                     if frame_flags & 0x01:  # END_STREAM
                         stream_ended = True
 
@@ -710,8 +842,20 @@ class TLSHttpClient:
 
                 elif frame_type == 0x07:  # GOAWAY
                     goaway_received = True
+                    # Parse GOAWAY to get error code
+                    if frame_len >= 8:
+                        last_stream_id = int.from_bytes(frame_payload[0:4], 'big') & 0x7FFFFFFF
+                        error_code = int.from_bytes(frame_payload[4:8], 'big')
+                        error_names = {
+                            0: "NO_ERROR", 1: "PROTOCOL_ERROR", 2: "INTERNAL_ERROR",
+                            3: "FLOW_CONTROL_ERROR", 4: "SETTINGS_TIMEOUT", 5: "STREAM_CLOSED",
+                            6: "FRAME_SIZE_ERROR", 7: "REFUSED_STREAM", 8: "CANCEL",
+                            9: "COMPRESSION_ERROR", 10: "CONNECT_ERROR", 11: "ENHANCE_YOUR_CALM",
+                            12: "INADEQUATE_SECURITY", 13: "HTTP_1_1_REQUIRED"
+                        }
+                        error_name = error_names.get(error_code, f"UNKNOWN({error_code})")
+                        self._log(f"Received GOAWAY: last_stream={last_stream_id}, error={error_name}")
                     # Don't stop immediately - we may still receive data for stream 1
-                    self._log("Received GOAWAY, continuing to read stream 1")
 
                 elif frame_type == 0x06:  # PING
                     if not (frame_flags & 0x01):
@@ -1030,7 +1174,10 @@ class TLSHttpClient:
                 req_body = urllib.parse.urlencode(body).encode()
                 if headers is None:
                     headers = {}
-                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                # Only add Content-Type if not already present (case-insensitive check)
+                has_content_type = any(k.lower() == 'content-type' for k in headers.keys())
+                if not has_content_type:
+                    headers["Content-Type"] = "application/x-www-form-urlencoded"
             elif isinstance(body, str):
                 req_body = body.encode()
             else:

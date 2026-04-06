@@ -78,18 +78,20 @@ class HTTP2BrowserFingerprints:
         """
         config = HTTP2FingerprintConfig()
 
-        # Chrome SETTINGS in exact order
+        # Chrome SETTINGS in exact order (Chrome 130+ values)
         config.settings = [
             (HTTP2Setting.HEADER_TABLE_SIZE, 65536),
             (HTTP2Setting.ENABLE_PUSH, 0),
             (HTTP2Setting.MAX_CONCURRENT_STREAMS, 1000),
-            (HTTP2Setting.INITIAL_WINDOW_SIZE, 6291456),  # 6MB
+            (HTTP2Setting.INITIAL_WINDOW_SIZE, 6291456),  # Chrome's actual value (~6MB)
             (HTTP2Setting.MAX_FRAME_SIZE, 16384),
             (HTTP2Setting.MAX_HEADER_LIST_SIZE, 262144),
-            (HTTP2Setting.UNKNOWN_SETTING_8, 1),  # Chrome 130+ uses this
+            # Note: UNKNOWN_SETTING_8 (setting 8) is used by Chrome 130+ but may cause
+            # issues with some servers. Uncomment if needed for strict Akamai detection.
+            # (HTTP2Setting.UNKNOWN_SETTING_8, 1),
         ]
 
-        # Chrome WINDOW_UPDATE: 15728640 - 65535 = 15663105
+        # Chrome sends WINDOW_UPDATE after SETTINGS (bringing window to 15728640)
         config.window_update_increment = 15663105
 
         # Chrome pseudo-header order
@@ -201,8 +203,8 @@ class HTTP2BrowserFingerprints:
             "user-agent",
         ]
 
-        config.enable_priority = True
-        config.priority_stream_id = 0
+        config.enable_priority = False  # Safari doesn't send PRIORITY frame on connection start
+        config.priority_stream_id = 3
         config.priority_weight = 256
 
         return config
