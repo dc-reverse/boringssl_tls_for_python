@@ -17,6 +17,15 @@ from typing import Optional, Dict, Any, Tuple, Union, List
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+# Check required decompression libraries
+try:
+    import brotli  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "brotli is required for decompressing br content. "
+        "Please install it: pip install brotli"
+    )
+
 # Try to import BoringSSL socket from native module
 try:
     from . import _tls_fingerprint as _native
@@ -918,14 +927,10 @@ class TLSHttpClient:
         content_encoding = ce_value.lower()
         if content_encoding == "gzip":
             response_body = self._decompress_gzip(response_body)
+        elif content_encoding == "deflate":
+            response_body = self._decompress_deflate(response_body)
         elif content_encoding == "br":
-            try:
-                import brotli
-                response_body = brotli.decompress(response_body)
-            except ImportError:
-                self._log("Warning: brotli not installed, cannot decompress br content")
-            except Exception as e:
-                self._log(f"Warning: brotli decompress failed: {e}")
+            response_body = self._decompress_brotli(response_body)
 
         return HttpResponse(
             status_code=status_code,
@@ -1122,12 +1127,17 @@ class TLSHttpClient:
             content_length = int(cl_value)
             # Body might be incomplete, but we return what we have
 
-        # Handle gzip encoding
+        # Handle content-encoding
         ce_value = headers.get("content-encoding", "")
         if isinstance(ce_value, list):
             ce_value = ce_value[0]
-        if ce_value.lower() == "gzip":
+        content_encoding = ce_value.lower()
+        if content_encoding == "gzip":
             body = self._decompress_gzip(body)
+        elif content_encoding == "deflate":
+            body = self._decompress_deflate(body)
+        elif content_encoding == "br":
+            body = self._decompress_brotli(body)
 
         return HttpResponse(
             status_code=status_code,
@@ -1166,11 +1176,27 @@ class TLSHttpClient:
     def _decompress_gzip(self, data: bytes) -> bytes:
         """Decompress gzip data."""
         import gzip
-        import io
         try:
             return gzip.decompress(data)
         except Exception:
             return data
+
+    def _decompress_deflate(self, data: bytes) -> bytes:
+        """Decompress deflate data."""
+        import zlib
+        try:
+            return zlib.decompress(data)
+        except zlib.error:
+            # Try raw deflate (no zlib header)
+            try:
+                return zlib.decompress(data, -zlib.MAX_WBITS)
+            except Exception:
+                return data
+
+    def _decompress_brotli(self, data: bytes) -> bytes:
+        """Decompress brotli data."""
+        import brotli
+        return brotli.decompress(data)
 
     def _build_request(
         self,
