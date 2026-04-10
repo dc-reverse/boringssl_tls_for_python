@@ -13,7 +13,7 @@ import struct
 import random
 import time
 import sys
-from typing import Optional, Dict, Any, Tuple, Union
+from typing import Optional, Dict, Any, Tuple, Union, List
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -90,7 +90,7 @@ class ProxyConfig:
 class HttpResponse:
     """HTTP response."""
     status_code: int
-    headers: Dict[str, str]
+    headers: Dict[str, Union[str, List[str]]]
     body: bytes
     http_version: str = "HTTP/1.1"
 
@@ -106,6 +106,38 @@ class HttpResponse:
         """Parse response body as JSON."""
         import json
         return json.loads(self.text)
+
+    def get_header(self, name: str, default: Optional[str] = None) -> Optional[str]:
+        """
+        Get a single header value. If the header has multiple values,
+        returns the first one. Use get_headers() for all values.
+
+        Args:
+            name: Header name (case-insensitive)
+            default: Default value if header not found
+
+        Returns:
+            Header value or default
+        """
+        value = self.headers.get(name.lower(), default)
+        if isinstance(value, list):
+            return value[0] if value else default
+        return value
+
+    def get_headers(self, name: str) -> List[str]:
+        """
+        Get all values for a header (handles Set-Cookie and other repeatable headers).
+
+        Args:
+            name: Header name (case-insensitive)
+
+        Returns:
+            List of header values (empty list if not found)
+        """
+        value = self.headers.get(name.lower(), [])
+        if isinstance(value, list):
+            return value
+        return [value] if value else []
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -754,7 +786,7 @@ class TLSHttpClient:
         except ImportError:
             decoder = None
 
-        response_headers = {}
+        response_headers: Dict[str, Union[str, List[str]]] = {}
         response_body = b""
         status_code = 200
         stream_ended = False
@@ -814,7 +846,21 @@ class TLSHttpClient:
                         try:
                             decoded = decoder.decode(frame_payload)
                             for name, value in decoded:
-                                response_headers[name] = value
+                                # Handle repeatable headers like set-cookie
+                                name_lower = name.lower()
+                                if name_lower in ("set-cookie", "set-cookie2"):
+                                    if name_lower not in response_headers:
+                                        response_headers[name_lower] = []
+                                    response_headers[name_lower].append(value)  # type: ignore
+                                elif name_lower in response_headers:
+                                    # Other headers: convert to list if multiple values
+                                    existing = response_headers[name_lower]
+                                    if isinstance(existing, list):
+                                        existing.append(value)
+                                    else:
+                                        response_headers[name_lower] = [existing, value]
+                                else:
+                                    response_headers[name_lower] = value
                             self._log(f"Decoded headers: {list(response_headers.keys())}")
                         except Exception as e:
                             self._log(f"HPACK decode error: {e}")
@@ -866,7 +912,10 @@ class TLSHttpClient:
                     pass
 
         # Handle decompression
-        content_encoding = response_headers.get("content-encoding", "").lower()
+        ce_value = response_headers.get("content-encoding", "")
+        if isinstance(ce_value, list):
+            ce_value = ce_value[0] if ce_value else ""
+        content_encoding = ce_value.lower()
         if content_encoding == "gzip":
             response_body = self._decompress_gzip(response_body)
         elif content_encoding == "br":
@@ -1032,24 +1081,52 @@ class TLSHttpClient:
         http_version = parts[0] if len(parts) > 0 else "HTTP/1.1"
         status_code = int(parts[1]) if len(parts) > 1 else 0
 
-        # Parse headers
-        headers = {}
+        # Parse headers - handle multiple values for same header (e.g., Set-Cookie)
+        # RFC 7230: Multiple message-header fields with the same field-name MAY be present
+        # Set-Cookie is special - each Set-Cookie header is separate, cannot be combined
+        headers: Dict[str, Union[str, List[str]]] = {}
         for line in header_lines[1:]:
             if ":" in line:
                 key, value = line.split(":", 1)
-                headers[key.strip().lower()] = value.strip()
+                key_lower = key.strip().lower()
+                value_stripped = value.strip()
+
+                # Handle repeatable headers like Set-Cookie
+                if key_lower in ("set-cookie", "set-cookie2"):
+                    # Always store as list for Set-Cookie
+                    if key_lower not in headers:
+                        headers[key_lower] = []
+                    headers[key_lower].append(value_stripped)  # type: ignore
+                elif key_lower in headers:
+                    # Other headers: convert to list if multiple values
+                    existing = headers[key_lower]
+                    if isinstance(existing, list):
+                        existing.append(value_stripped)
+                    else:
+                        headers[key_lower] = [existing, value_stripped]
+                else:
+                    headers[key_lower] = value_stripped
 
         # Handle chunked transfer encoding
-        if headers.get("transfer-encoding", "").lower() == "chunked":
+        te_value = headers.get("transfer-encoding", "")
+        if isinstance(te_value, list):
+            te_value = te_value[0]
+        if te_value.lower() == "chunked":
             body = self._decode_chunked(body)
 
         # Handle content-length
         elif "content-length" in headers:
-            content_length = int(headers["content-length"])
+            cl_value = headers["content-length"]
+            if isinstance(cl_value, list):
+                cl_value = cl_value[0]
+            content_length = int(cl_value)
             # Body might be incomplete, but we return what we have
 
         # Handle gzip encoding
-        if headers.get("content-encoding", "").lower() == "gzip":
+        ce_value = headers.get("content-encoding", "")
+        if isinstance(ce_value, list):
+            ce_value = ce_value[0]
+        if ce_value.lower() == "gzip":
             body = self._decompress_gzip(body)
 
         return HttpResponse(
