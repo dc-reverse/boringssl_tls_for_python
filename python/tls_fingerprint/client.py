@@ -282,13 +282,10 @@ class TLSHttpClient:
             "User-Agent": ua,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
             "Connection": "keep-alive",
             "Host": host,
         }
-
-        if is_https:
-            headers["Upgrade-Insecure-Requests"] = "1"
 
         # Merge with custom headers
         headers.update(self._default_headers)
@@ -688,23 +685,24 @@ class TLSHttpClient:
         except ImportError:
             use_hpack = False
 
-        req_headers = self._get_default_headers(host, True)
+        # Build merged headers: user-provided order takes priority.
+        # Start from user headers (preserving their insertion order),
+        # then append any defaults the user didn't supply.
         if headers:
-            # Merge headers with case-insensitive deduplication
-            for k, v in headers.items():
-                # Check if key already exists (case-insensitive)
-                existing_key = None
-                for existing in req_headers.keys():
-                    if existing.lower() == k.lower():
-                        existing_key = existing
-                        break
-                if existing_key:
-                    req_headers[existing_key] = v  # Overwrite existing
-                else:
-                    req_headers[k] = v  # Add new
+            req_headers = dict(headers)  # preserve caller's order
+            defaults = self._get_default_headers(host, True)
+            for dk, dv in defaults.items():
+                # Only add default if user didn't provide it (case-insensitive)
+                if not any(k.lower() == dk.lower() for k in req_headers):
+                    req_headers[dk] = dv
+        else:
+            req_headers = self._get_default_headers(host, True)
+
+        # Add Content-Length for requests with body
+        if body:
+            req_headers["Content-Length"] = str(len(body))
 
         # Build pseudo-headers + regular headers
-        # Use browser-specific pseudo-header order from h2_config
         pseudo_values = {
             ':method': method,
             ':authority': host,
@@ -718,27 +716,12 @@ class TLSHttpClient:
                 if ph in pseudo_values:
                     headers_list.append((ph, pseudo_values[ph]))
 
-            # Add regular headers in browser-specific order
-            added_headers = set()
-            for hname in h2_config.header_order:
-                # Case-insensitive match
-                for k, v in req_headers.items():
-                    if k.lower() == hname.lower():
-                        headers_list.append((k.lower(), v))
-                        added_headers.add(k.lower())
-                        break
-
-            # Add remaining headers not in the order list (sorted for consistency)
-            for k, v in sorted(req_headers.items(), key=lambda x: x[0].lower()):
-                if k.lower() not in added_headers and k.lower() not in ("host", "connection", "transfer-encoding"):
+            # Regular headers: respect the caller's dict insertion order as-is,
+            # skip HTTP/2 forbidden headers.
+            for k, v in req_headers.items():
+                if k.lower() not in ("host", "connection", "transfer-encoding"):
                     headers_list.append((k.lower(), v))
 
-            # Debug: check for duplicate header names
-            header_names = [h[0] for h in headers_list]
-            if len(header_names) != len(set(header_names)):
-                from collections import Counter
-                dupes = [h for h, count in Counter(header_names).items() if count > 1]
-                self._log(f"WARNING: Duplicate headers detected: {dupes}")
             self._log(f"H2 headers ({len(headers_list)}): {[h[0] for h in headers_list]}")
             encoded = encoder.encode(headers_list)
             self._log(f"HEADERS frame payload ({len(encoded)} bytes): {encoded.hex()[:200]}...")
@@ -931,6 +914,8 @@ class TLSHttpClient:
             response_body = self._decompress_deflate(response_body)
         elif content_encoding == "br":
             response_body = self._decompress_brotli(response_body)
+        elif content_encoding == "zstd":
+            response_body = self._decompress_zstd(response_body)
 
         return HttpResponse(
             status_code=status_code,
@@ -1138,6 +1123,8 @@ class TLSHttpClient:
             body = self._decompress_deflate(body)
         elif content_encoding == "br":
             body = self._decompress_brotli(body)
+        elif content_encoding == "zstd":
+            body = self._decompress_zstd(body)
 
         return HttpResponse(
             status_code=status_code,
@@ -1197,6 +1184,19 @@ class TLSHttpClient:
         """Decompress brotli data."""
         import brotli
         return brotli.decompress(data)
+
+    def _decompress_zstd(self, data: bytes) -> bytes:
+        """Decompress zstd data."""
+        try:
+            import zstandard as zstd
+            dctx = zstd.ZstdDecompressor()
+            return dctx.decompress(data, max_output_size=len(data) * 10)
+        except ImportError:
+            self._log("zstandard package not installed, cannot decompress zstd data")
+            return data
+        except Exception as e:
+            self._log(f"zstd decompression failed: {e}")
+            return data
 
     def _build_request(
         self,

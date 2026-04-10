@@ -97,22 +97,31 @@ class HTTP2BrowserFingerprints:
         # Chrome pseudo-header order
         config.pseudo_header_order = [":method", ":authority", ":scheme", ":path"]
 
-        # Chrome header order (typical)
+        # Chrome header order — must include ALL headers Chrome may send.
+        # Headers not in this list fall through to alphabetical sort,
+        # which Akamai/Cloudflare can detect.  Order derived from real
+        # Chrome 146 captures (GET navigations and POST / fetch-mode:cors).
         config.header_order = [
+            "pragma",
+            "cache-control",
+            "sec-ch-ua-platform",
+            "user-agent",
+            "sec-ch-ua",
+            "content-type",
+            "sec-ch-ua-mobile",
             "accept",
             "accept-encoding",
-            "accept-language",
-            "cache-control",
             "cookie",
-            "sec-ch-ua",
-            "sec-ch-ua-mobile",
-            "sec-ch-ua-platform",
-            "sec-fetch-dest",
-            "sec-fetch-mode",
+            "content-length",
+            "origin",
             "sec-fetch-site",
+            "sec-fetch-mode",
+            "sec-fetch-dest",
             "sec-fetch-user",
             "upgrade-insecure-requests",
-            "user-agent",
+            "referer",
+            "accept-language",
+            "priority",
         ]
 
         config.enable_priority = True
